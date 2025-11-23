@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MaxVar - Кулинарный форум</title>
+    <title>Gourmet Magazine - Кулинарный форум</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <script>
@@ -16,7 +16,6 @@
               sans: ['"Inter"', 'sans-serif'],
             },
             colors: {
-              // Override emerald to a natural grassy green
               emerald: {
                 50: '#f4f9f0',
                 100: '#e3f3db',
@@ -56,17 +55,14 @@
     </script>
     <style>
       body {
-        /* Light Mode: Soft marble/table texture with a heavy white wash */
         background-image: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.92)), url('https://images.unsplash.com/photo-1585314062340-f1a5a7c9328d?q=80&w=2070&auto=format&fit=crop');
         background-size: cover;
         background-attachment: fixed;
         background-position: center;
       }
       .dark body {
-        /* Dark Mode: Dark slate/concrete texture with a heavy dark wash */
         background-image: linear-gradient(rgba(20, 20, 20, 0.92), rgba(20, 20, 20, 0.95)), url('https://t3.ftcdn.net/jpg/01/71/18/44/360_F_171184456_V5eQuWXcFZtLZsTCWloej3y6yHqBszjD.jpg');
       }
-      /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -93,30 +89,27 @@
         box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
       }
     </style>
-<script type="importmap">
+  <script type="importmap">
 {
   "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "vite": "https://aistudiocdn.com/vite@^7.2.4",
-    "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
-    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
-    "firebase/": "https://aistudiocdn.com/firebase@^12.6.0/",
-    "cors": "https://aistudiocdn.com/cors@^2.8.5",
-    "dotenv": "https://aistudiocdn.com/dotenv@^17.2.3",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
     "express": "https://aistudiocdn.com/express@^5.1.0",
-    "mongoose": "https://aistudiocdn.com/mongoose@^9.0.0"
+    "path": "https://aistudiocdn.com/path@^0.12.7",
+    "dotenv": "https://aistudiocdn.com/dotenv@^17.2.3",
+    "mongoose": "https://aistudiocdn.com/mongoose@^9.0.0",
+    "cors": "https://aistudiocdn.com/cors@^2.8.5",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "url": "https://aistudiocdn.com/url@^0.11.4"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
   <body class="font-sans antialiased text-gray-800 dark:text-gray-200 transition-colors duration-300 min-h-screen">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
-</html> 
+</html>
