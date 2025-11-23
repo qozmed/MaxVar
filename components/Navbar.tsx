@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag } from 'lucide-react';
+import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag, Trash2 } from 'lucide-react';
 import { User, Recipe } from '../types';
 import { StorageService } from '../services/storage';
 import NotificationCenter from './NotificationCenter';
@@ -15,8 +15,8 @@ interface NavbarProps {
   onProfileClick: () => void;
   onAdminClick: () => void;
   onRecipeSelect?: (recipe: Recipe) => void;
-  availableTags?: string[]; // New prop
-  selectedTags?: string[]; // New prop
+  availableTags?: string[];
+  selectedTags?: string[];
 }
 
 const Navbar: React.FC<NavbarProps> = ({ 
@@ -44,24 +44,19 @@ const Navbar: React.FC<NavbarProps> = ({
 
   // Filter Dropdown State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [localSelectedTags, setLocalSelectedTags] = useState<string[]>(selectedTags);
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
 
   const searchRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Sync internal tag state when props change
-  useEffect(() => {
-      setLocalSelectedTags(selectedTags);
-  }, [selectedTags]);
-
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
       if (searchQuery.length > 1) {
         setIsSearching(true);
         try {
-            const result = await StorageService.searchRecipes(searchQuery, 1, 5, 'newest', localSelectedTags);
+            const result = await StorageService.searchRecipes(searchQuery, 1, 5, 'newest', selectedTags);
             setSuggestions(result.data);
             setShowSuggestions(true);
         } catch (e) { console.error(e); } finally { setIsSearching(false); }
@@ -71,7 +66,7 @@ const Navbar: React.FC<NavbarProps> = ({
       }
     }, 400);
     return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery, localSelectedTags]);
+  }, [searchQuery, selectedTags]);
 
   useEffect(() => { if (isMobileSearchOpen && mobileSearchInputRef.current) mobileSearchInputRef.current.focus(); }, [isMobileSearchOpen]);
   
@@ -79,7 +74,10 @@ const Navbar: React.FC<NavbarProps> = ({
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) setShowSuggestions(false);
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) setIsUserMenuOpen(false);
-      if (filterRef.current && !filterRef.current.contains(event.target as Node)) setIsFilterOpen(false);
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+          // Only close on desktop click-outside, mobile uses X button usually
+          if (window.innerWidth >= 640) setIsFilterOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -90,7 +88,7 @@ const Navbar: React.FC<NavbarProps> = ({
     setShowSuggestions(false);
     setIsMobileSearchOpen(false);
     setIsFilterOpen(false);
-    onSearch(searchQuery, localSelectedTags);
+    onSearch(searchQuery, selectedTags);
   };
 
   const handleClearSearch = () => {
@@ -104,21 +102,28 @@ const Navbar: React.FC<NavbarProps> = ({
     setSearchQuery('');
     setShowSuggestions(false);
     setIsMobileSearchOpen(false);
-    if (onRecipeSelect) onRecipeSelect(recipe); else onSearch(recipe.parsed_content.dish_name, localSelectedTags);
+    if (onRecipeSelect) onRecipeSelect(recipe); else onSearch(recipe.parsed_content.dish_name, selectedTags);
   };
 
+  // Auto-apply tags immediately
   const toggleTag = (tag: string) => {
-      setLocalSelectedTags(prev => 
-          prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
-      );
+      const newTags = selectedTags.includes(tag) 
+          ? selectedTags.filter(t => t !== tag) 
+          : [...selectedTags, tag];
+      onSearch(searchQuery, newTags);
   };
 
-  const applyFilters = () => {
-      setIsFilterOpen(false);
-      onSearch(searchQuery, localSelectedTags);
+  const clearAllTags = () => {
+      setTagSearchQuery('');
+      onSearch(searchQuery, []);
   };
 
   const isModOrAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator');
+
+  // Filter available tags based on search
+  const filteredAvailableTags = availableTags.filter(tag => 
+      tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
+  );
 
   return (
     <>
@@ -140,28 +145,88 @@ const Navbar: React.FC<NavbarProps> = ({
                 <button 
                     type="button"
                     onClick={() => setIsFilterOpen(!isFilterOpen)}
-                    className={`p-2 rounded-xl border transition-all flex items-center gap-2 ${localSelectedTags.length > 0 ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white/50 dark:bg-black/50 border-gray-200 dark:border-gray-700 hover:bg-gray-100'}`}
+                    className={`p-2 rounded-xl border transition-all flex items-center gap-2 ${selectedTags.length > 0 ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white/50 dark:bg-black/50 border-gray-200 dark:border-gray-700 hover:bg-gray-100'}`}
                     title="Фильтр по тегам"
                 >
                     <Filter className="w-5 h-5" />
-                    {localSelectedTags.length > 0 && <span className="text-xs font-bold bg-white/50 px-1.5 rounded-full">{localSelectedTags.length}</span>}
+                    {selectedTags.length > 0 && <span className="text-xs font-bold bg-white/50 px-1.5 rounded-full">{selectedTags.length}</span>}
                 </button>
+                
                 {isFilterOpen && (
-                    <div className="absolute top-full left-0 mt-2 w-64 max-h-80 overflow-y-auto custom-scrollbar bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-100 dark:border-gray-700 p-3 z-50 animate-fade-in">
-                        <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Теги блюд</h4>
-                        <div className="flex flex-wrap gap-2 mb-3">
-                            {availableTags.length > 0 ? availableTags.map(tag => (
-                                <button
-                                    key={tag}
-                                    onClick={() => toggleTag(tag)}
-                                    className={`text-xs px-2 py-1 rounded-md border transition-colors ${localSelectedTags.includes(tag) ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400'}`}
-                                >
-                                    {tag}
-                                </button>
-                            )) : <p className="text-xs text-gray-400">Теги загружаются...</p>}
+                    <>
+                        {/* Mobile Overlay Backdrop */}
+                        <div className="fixed inset-0 bg-black/60 z-40 sm:hidden backdrop-blur-sm" onClick={() => setIsFilterOpen(false)} />
+                        
+                        {/* Dropdown / Mobile Panel */}
+                        <div className="fixed inset-x-0 bottom-0 top-16 z-50 flex flex-col bg-white dark:bg-gray-900 shadow-2xl border-t border-gray-200 dark:border-gray-700 sm:border sm:absolute sm:inset-auto sm:top-full sm:left-0 sm:mt-2 sm:w-80 sm:max-h-[600px] sm:rounded-xl animate-fade-in">
+                            
+                            {/* Header */}
+                            <div className="flex items-center justify-between p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 rounded-t-xl">
+                                <h4 className="text-sm font-bold uppercase text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                                    <Tag className="w-4 h-4" /> Теги {selectedTags.length > 0 && `(${selectedTags.length})`}
+                                </h4>
+                                <div className="flex items-center gap-2">
+                                    {selectedTags.length > 0 && (
+                                        <button onClick={clearAllTags} className="text-xs font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded-md transition-colors" title="Сбросить все">
+                                            Сбросить
+                                        </button>
+                                    )}
+                                    <button onClick={() => setIsFilterOpen(false)} className="sm:hidden p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700">
+                                        <X className="w-5 h-5 text-gray-500" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Search Input */}
+                            <div className="p-3 bg-white dark:bg-gray-900">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                                    <input 
+                                        type="text" 
+                                        className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-transparent focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white transition-all" 
+                                        placeholder="Найти категорию..."
+                                        value={tagSearchQuery}
+                                        onChange={(e) => setTagSearchQuery(e.target.value)}
+                                        autoFocus={window.innerWidth >= 640} // Autofocus only on desktop to prevent keyboard jump on mobile
+                                    />
+                                    {tagSearchQuery && (
+                                        <button onClick={() => setTagSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Tags List */}
+                            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-0">
+                                <div className="flex flex-wrap gap-2">
+                                    {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
+                                        <button
+                                            key={tag}
+                                            onClick={() => toggleTag(tag)}
+                                            className={`text-sm sm:text-xs px-3 py-2 sm:py-1.5 rounded-lg border transition-all active:scale-95 ${
+                                                selectedTags.includes(tag) 
+                                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20' 
+                                                : 'bg-gray-50 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-500 hover:bg-white dark:hover:bg-gray-800'
+                                            }`}
+                                        >
+                                            {tag}
+                                        </button>
+                                    )) : (
+                                        <div className="w-full py-8 text-center flex flex-col items-center text-gray-400">
+                                            <Search className="w-8 h-8 mb-2 opacity-20" />
+                                            <p className="text-sm">Ничего не найдено</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            {/* Footer hint (optional) */}
+                            <div className="p-2 text-center border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl sm:block hidden">
+                                <p className="text-[10px] text-gray-400">Выберите теги для фильтрации</p>
+                            </div>
                         </div>
-                        <button onClick={applyFilters} className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700">Применить</button>
-                    </div>
+                    </>
                 )}
             </div>
 
@@ -195,7 +260,7 @@ const Navbar: React.FC<NavbarProps> = ({
                   <>
                     <div className="hidden md:flex items-center gap-3">
                         {isModOrAdmin && (
-                           <button onClick={onAdminClick} className={`p-2 rounded-full transition-colors ${currentUser.role === 'admin' ? 'text-red-600 bg-red-50 hover:bg-red-100' : 'text-blue-600 bg-blue-50 hover:bg-blue-100'}`} title={currentUser.role === 'admin' ? "Админ Панель" : "Панель Модератора"}>
+                           <button onClick={onAdminClick} className={`p-2 rounded-full transition-colors ${currentUser.role === 'admin' ? 'text-red-600 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40' : 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40'}`} title={currentUser.role === 'admin' ? "Админ Панель" : "Панель Модератора"}>
                                 {currentUser.role === 'admin' ? <ShieldAlert className="h-5 w-5" /> : <Headphones className="h-5 w-5" />}
                            </button>
                         )}
@@ -203,7 +268,7 @@ const Navbar: React.FC<NavbarProps> = ({
                             <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center text-white text-xs font-bold overflow-hidden">{currentUser.avatar ? <img src={currentUser.avatar} alt="" className="w-full h-full object-cover" /> : currentUser.name.charAt(0)}</div>
                             <span className="font-medium text-sm text-gray-700 dark:text-gray-200">{currentUser.name}</span>
                         </button>
-                        <button onClick={onLogout} className="p-2 rounded-full text-red-500 hover:bg-red-50" title="Выйти"><LogOut className="h-5 w-5" /></button>
+                        <button onClick={onLogout} className="p-2 rounded-full text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" title="Выйти"><LogOut className="h-5 w-5" /></button>
                     </div>
                     <button onClick={() => setIsUserMenuOpen(!isUserMenuOpen)} className="md:hidden p-1 rounded-full ring-2 ring-transparent active:ring-emerald-500 transition-all ml-1">
                         <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white text-sm font-bold overflow-hidden shadow-md">{currentUser.avatar ? <img src={currentUser.avatar} alt="" className="w-full h-full object-cover" /> : currentUser.name.charAt(0)}</div>
@@ -221,7 +286,7 @@ const Navbar: React.FC<NavbarProps> = ({
                             <div className="p-1">
                                 <button onClick={() => { onProfileClick(); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors"><Settings className="w-4 h-4" /> Профиль</button>
                                 {isModOrAdmin && (
-                                    <button onClick={() => { onAdminClick(); setIsUserMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors ${currentUser.role === 'admin' ? 'text-red-600 hover:bg-red-50' : 'text-blue-600 hover:bg-blue-50'}`}>
+                                    <button onClick={() => { onAdminClick(); setIsUserMenuOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors ${currentUser.role === 'admin' ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20' : 'text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'}`}>
                                         {currentUser.role === 'admin' ? <ShieldAlert className="w-4 h-4" /> : <Headphones className="w-4 h-4" />} Панель
                                     </button>
                                 )}
@@ -245,13 +310,15 @@ const Navbar: React.FC<NavbarProps> = ({
                 <input ref={mobileSearchInputRef} type="text" className="block w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-black/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-sm transition-all" placeholder="Что будем готовить?" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                 {searchQuery && <button type="button" onClick={handleClearSearch} className="absolute right-3 top-2.5 text-gray-400"><X className="w-4 h-4" /></button>}
              </form>
-             {availableTags.length > 0 && (
-                <div className="mt-3 flex overflow-x-auto gap-2 pb-1 scrollbar-hide">
-                    {availableTags.slice(0, 10).map(tag => (
-                        <button key={tag} onClick={() => toggleTag(tag)} className={`text-xs px-2 py-1 rounded-md border whitespace-nowrap ${localSelectedTags.includes(tag) ? 'bg-emerald-500 text-white' : 'bg-gray-50 text-gray-600'}`}>{tag}</button>
-                    ))}
-                </div>
-             )}
+             <div className="mt-3 flex items-center justify-between">
+                <button 
+                    onClick={() => setIsFilterOpen(true)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${selectedTags.length > 0 ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-200 text-gray-600'}`}
+                >
+                    <Filter className="w-3.5 h-3.5" /> 
+                    Фильтры {selectedTags.length > 0 && `(${selectedTags.length})`}
+                </button>
+             </div>
         </div>
       )}
     </nav>

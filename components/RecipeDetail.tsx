@@ -159,7 +159,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
   };
 
   // Logic to handle votes (likes/dislikes)
-  const handleVote = async (commentId: string, type: 'like' | 'dislike', parentId?: string) => {
+  const handleVote = async (commentId: string, type: 'like' | 'dislike', parentId?: string, commentAuthor?: string) => {
       if (!currentUser || !recipe) {
           showAlert("Внимание", "Войдите, чтобы голосовать.");
           return;
@@ -169,45 +169,44 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       const userVotes = { ...(currentUser.votedComments || {}) };
       const currentVote = userVotes[commentId]; // 'like' | 'dislike' | undefined
 
-      // Clone recipe comments
-      let updatedComments = [...comments];
-      
-      // Helper function to update a specific comment node
+      // Prevent spamming / illogical states strictly
+      if (currentVote === type) {
+          // Already voted this way -> Remove vote (toggle off)
+          delete userVotes[commentId];
+      } else {
+          // No vote OR swapping vote -> Set new vote
+          userVotes[commentId] = type;
+      }
+
+      // Helper function to update a specific comment node's counts
       const updateCommentNode = (node: Comment) => {
           let newLikes = node.likes;
           let newDislikes = node.dislikes;
 
           if (currentVote === type) {
-              // Toggle off (remove vote)
+              // Toggle off
               if (type === 'like') newLikes--;
               else newDislikes--;
-              delete userVotes[commentId];
           } else if (currentVote) {
-              // Swap vote
+              // Swap
               if (type === 'like') {
                   newLikes++;
                   newDislikes--;
-                  userVotes[commentId] = 'like';
               } else {
                   newDislikes++;
                   newLikes--;
-                  userVotes[commentId] = 'dislike';
               }
           } else {
-              // Add new vote
-              if (type === 'like') {
-                  newLikes++;
-                  userVotes[commentId] = 'like';
-              } else {
-                  newDislikes++;
-                  userVotes[commentId] = 'dislike';
-              }
+              // New Vote
+              if (type === 'like') newLikes++;
+              else newDislikes++;
           }
           return { ...node, likes: Math.max(0, newLikes), dislikes: Math.max(0, newDislikes) };
       };
 
+      // Traverse and update comments
+      let updatedComments = [...comments];
       if (parentId) {
-          // It's a reply
           updatedComments = comments.map(c => {
               if (c.id === parentId) {
                   const updatedReplies = (c.replies || []).map(r => {
@@ -219,7 +218,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
               return c;
           });
       } else {
-          // Top level comment
           updatedComments = comments.map(c => {
               if (c.id === commentId) return updateCommentNode(c);
               return c;
@@ -232,6 +230,19 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       // Update Recipe State
       const updatedRecipe = { ...recipe, comments: updatedComments };
       onUpdateRecipe(updatedRecipe);
+
+      // Send Notification ONLY if it's a new positive vote (or dislike if you want) and not self-vote
+      if (!currentVote && commentAuthor && commentAuthor !== currentUser.name) {
+          try {
+              await StorageService.sendNotification({
+                  userId: commentAuthor,
+                  type: type === 'like' ? 'success' : 'warning',
+                  title: type === 'like' ? 'Новый лайк' : 'Новый дизлайк',
+                  message: `${currentUser.name} оценил ваш комментарий: ${type === 'like' ? '👍' : '👎'}`,
+                  link: `/recipe/${recipe.id}`
+              });
+          } catch(e) { console.error(e); }
+      }
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -325,7 +336,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       const displayAvatar = liveAvatar || comment.userAvatar;
 
       return (
-          <div key={comment.id} className={`flex gap-3 sm:gap-4 ${isReply ? 'ml-8 sm:ml-12 mt-3 border-l-2 border-gray-100 dark:border-gray-800 pl-4' : 'p-4 sm:p-6 rounded-2xl glass-panel dark:bg-gray-800/50'}`}>
+          <div key={comment.id} className={`flex gap-3 sm:gap-4 ${isReply ? 'ml-8 sm:ml-12 mt-3 border-l-2 border-gray-100 dark:border-gray-800 pl-4' : 'p-4 sm:p-6 rounded-2xl glass-panel dark:bg-gray-800/50 border dark:border-gray-700'}`}>
                 <button 
                 onClick={() => onUserClick(comment.user)}
                 className={`flex-shrink-0 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 overflow-hidden hover:ring-2 hover:ring-emerald-500 transition-all ${isReply ? 'w-6 h-6 sm:w-8 sm:h-8' : 'w-8 h-8 sm:w-10 sm:h-10'}`}
@@ -364,17 +375,18 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                     
                     <div className="flex items-center gap-4">
                         {/* Interactive Likes/Dislikes */}
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 bg-gray-50 dark:bg-black/20 px-2 py-1 rounded-lg border border-gray-100 dark:border-gray-700">
                             <button 
-                                onClick={() => handleVote(comment.id, 'like', parentId)}
-                                className={`flex items-center gap-1 text-xs font-medium transition-colors ${userVote === 'like' ? 'text-emerald-600' : 'text-gray-500 hover:text-emerald-600'}`}
+                                onClick={() => handleVote(comment.id, 'like', parentId, comment.user)}
+                                className={`flex items-center gap-1 text-xs font-medium transition-colors p-1 rounded hover:bg-white dark:hover:bg-white/10 ${userVote === 'like' ? 'text-emerald-600' : 'text-gray-500 hover:text-emerald-600'}`}
                             >
                                 <ThumbsUp className={`w-3.5 h-3.5 ${userVote === 'like' ? 'fill-current' : ''}`} />
                                 <span>{comment.likes || 0}</span>
                             </button>
+                            <div className="w-px h-3 bg-gray-300 dark:bg-gray-600"></div>
                             <button 
-                                onClick={() => handleVote(comment.id, 'dislike', parentId)}
-                                className={`flex items-center gap-1 text-xs font-medium transition-colors ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-500 hover:text-red-500'}`}
+                                onClick={() => handleVote(comment.id, 'dislike', parentId, comment.user)}
+                                className={`flex items-center gap-1 text-xs font-medium transition-colors p-1 rounded hover:bg-white dark:hover:bg-white/10 ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-500 hover:text-red-500'}`}
                             >
                                 <ThumbsDown className={`w-3.5 h-3.5 ${userVote === 'dislike' ? 'fill-current' : ''}`} />
                                 <span>{comment.dislikes || 0}</span>
@@ -531,7 +543,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
 
       {activeTab === 'instructions' ? (
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8 animate-slide-up">
-             <div className="md:col-span-4 glass-panel dark:bg-gray-800/50 p-6 rounded-2xl h-fit">
+             <div className="md:col-span-4 glass-panel dark:bg-gray-800/50 p-6 rounded-2xl h-fit border dark:border-gray-700">
                 <h3 className="font-serif text-xl font-bold mb-4 dark:text-white">Ингредиенты</h3>
                 <ul className="space-y-3">
                     {(recipe.parsed_content.ingredients || []).map((ing, idx) => (
@@ -557,7 +569,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                             {currentUser.avatar ? <img src={currentUser.avatar} className="w-full h-full object-cover" /> : <div className="flex h-full items-center justify-center text-white font-bold">{currentUser.name.charAt(0)}</div>}
                          </div>
                          <div className="grow relative">
-                             <textarea value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder="Поделитесь впечатлениями..." className="w-full p-4 pr-12 rounded-2xl bg-white/50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-emerald-500 outline-none resize-none min-h-[100px] text-gray-900 dark:text-gray-100" />
+                             <textarea value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder="Поделитесь впечатлениями..." className="w-full p-4 pr-12 rounded-2xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-emerald-500 outline-none resize-none min-h-[100px] text-gray-900 dark:text-gray-100" />
                             <button type="submit" disabled={!newComment.trim()} className="absolute bottom-3 right-3 p-2 bg-emerald-600 text-white rounded-full hover:bg-emerald-700 disabled:opacity-50"><Send className="w-4 h-4" /></button>
                          </div>
                     </div>

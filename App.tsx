@@ -6,6 +6,7 @@ import RecipeDetail from './components/RecipeDetail';
 import UserProfile from './components/UserProfile';
 import AuthModal from './components/AuthModal';
 import AdminPanel from './components/AdminPanel';
+import ModeratorPanel from './components/ModeratorPanel';
 import { ModalProvider, useModal } from './components/ModalProvider';
 import { Recipe, User, AppView } from './types';
 import { StorageService } from './services/storage';
@@ -93,9 +94,12 @@ const AppContent: React.FC = () => {
           } else if (savedState.view === AppView.PROFILE && StorageService.getUser()) {
               setView(AppView.PROFILE);
               restored = true;
-          } else if (savedState.view === AppView.ADMIN && StorageService.getUser()?.role === 'admin') {
-              setView(AppView.ADMIN);
-              restored = true;
+          } else if (savedState.view === AppView.ADMIN) {
+              const user = StorageService.getUser();
+              if (user && (user.role === 'admin' || user.role === 'moderator')) {
+                  setView(AppView.ADMIN);
+                  restored = true;
+              }
           }
       }
 
@@ -543,13 +547,21 @@ const AppContent: React.FC = () => {
             />
         )}
 
-        {view === AppView.ADMIN && currentUser?.role === 'admin' && (
-            <AdminPanel 
-                currentUser={currentUser}
-                onBack={() => setView(AppView.HOME)}
-                onRecipeSelect={handleRecipeClick}
-                onTagClick={handleTagClick}
-            />
+        {view === AppView.ADMIN && currentUser && (
+            currentUser.role === 'admin' ? (
+                <AdminPanel 
+                    currentUser={currentUser}
+                    onBack={() => setView(AppView.HOME)}
+                    onRecipeSelect={handleRecipeClick}
+                    onTagClick={handleTagClick}
+                />
+            ) : currentUser.role === 'moderator' ? (
+                 <ModeratorPanel 
+                    currentUser={currentUser}
+                    onBack={() => setView(AppView.HOME)}
+                    onRecipeSelect={handleRecipeClick}
+                />
+            ) : null
         )}
       </main>
 
