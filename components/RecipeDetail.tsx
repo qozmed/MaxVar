@@ -56,6 +56,9 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
   const [reportReason, setReportReason] = useState<string | null>(null);
   const [customReportDetails, setCustomReportDetails] = useState('');
   const [isReporting, setIsReporting] = useState(false);
+  
+  // Vote Debounce State
+  const [processingVotes, setProcessingVotes] = useState<Set<string>>(new Set());
 
   const comments = recipe?.comments || [];
   const hasRated = currentUser && currentUser.ratedRecipeIds && recipe && currentUser.ratedRecipeIds.includes(recipe.id);
@@ -164,84 +167,97 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
           showAlert("Внимание", "Войдите, чтобы голосовать.");
           return;
       }
+      
+      // DEBOUNCE / LOCK: Prevent spam clicking
+      if (processingVotes.has(commentId)) return;
 
-      // Clone votedComments map
-      const userVotes = { ...(currentUser.votedComments || {}) };
-      const currentVote = userVotes[commentId]; // 'like' | 'dislike' | undefined
+      // Lock this comment
+      setProcessingVotes(prev => { const next = new Set(prev); next.add(commentId); return next; });
 
-      // Prevent spamming / illogical states strictly
-      if (currentVote === type) {
-          // Already voted this way -> Remove vote (toggle off)
-          delete userVotes[commentId];
-      } else {
-          // No vote OR swapping vote -> Set new vote
-          userVotes[commentId] = type;
-      }
+      try {
+        // Clone votedComments map
+        const userVotes = { ...(currentUser.votedComments || {}) };
+        const currentVote = userVotes[commentId]; // 'like' | 'dislike' | undefined
 
-      // Helper function to update a specific comment node's counts
-      const updateCommentNode = (node: Comment) => {
-          let newLikes = node.likes;
-          let newDislikes = node.dislikes;
+        // Prevent spamming / illogical states strictly
+        if (currentVote === type) {
+            // Already voted this way -> Remove vote (toggle off)
+            delete userVotes[commentId];
+        } else {
+            // No vote OR swapping vote -> Set new vote
+            userVotes[commentId] = type;
+        }
 
-          if (currentVote === type) {
-              // Toggle off
-              if (type === 'like') newLikes--;
-              else newDislikes--;
-          } else if (currentVote) {
-              // Swap
-              if (type === 'like') {
-                  newLikes++;
-                  newDislikes--;
-              } else {
-                  newDislikes++;
-                  newLikes--;
-              }
-          } else {
-              // New Vote
-              if (type === 'like') newLikes++;
-              else newDislikes++;
-          }
-          return { ...node, likes: Math.max(0, newLikes), dislikes: Math.max(0, newDislikes) };
-      };
+        // Helper function to update a specific comment node's counts
+        const updateCommentNode = (node: Comment) => {
+            let newLikes = node.likes;
+            let newDislikes = node.dislikes;
 
-      // Traverse and update comments
-      let updatedComments = [...comments];
-      if (parentId) {
-          updatedComments = comments.map(c => {
-              if (c.id === parentId) {
-                  const updatedReplies = (c.replies || []).map(r => {
-                      if (r.id === commentId) return updateCommentNode(r);
-                      return r;
-                  });
-                  return { ...c, replies: updatedReplies };
-              }
-              return c;
-          });
-      } else {
-          updatedComments = comments.map(c => {
-              if (c.id === commentId) return updateCommentNode(c);
-              return c;
-          });
-      }
+            if (currentVote === type) {
+                // Toggle off
+                if (type === 'like') newLikes--;
+                else newDislikes--;
+            } else if (currentVote) {
+                // Swap
+                if (type === 'like') {
+                    newLikes++;
+                    newDislikes--;
+                } else {
+                    newDislikes++;
+                    newLikes--;
+                }
+            } else {
+                // New Vote
+                if (type === 'like') newLikes++;
+                else newDislikes++;
+            }
+            return { ...node, likes: Math.max(0, newLikes), dislikes: Math.max(0, newDislikes) };
+        };
 
-      // Update Local User State
-      onUpdateUser({ ...currentUser, votedComments: userVotes });
+        // Traverse and update comments
+        let updatedComments = [...comments];
+        if (parentId) {
+            updatedComments = comments.map(c => {
+                if (c.id === parentId) {
+                    const updatedReplies = (c.replies || []).map(r => {
+                        if (r.id === commentId) return updateCommentNode(r);
+                        return r;
+                    });
+                    return { ...c, replies: updatedReplies };
+                }
+                return c;
+            });
+        } else {
+            updatedComments = comments.map(c => {
+                if (c.id === commentId) return updateCommentNode(c);
+                return c;
+            });
+        }
 
-      // Update Recipe State
-      const updatedRecipe = { ...recipe, comments: updatedComments };
-      onUpdateRecipe(updatedRecipe);
+        // Update Local User State
+        onUpdateUser({ ...currentUser, votedComments: userVotes });
 
-      // Send Notification ONLY if it's a new positive vote (or dislike if you want) and not self-vote
-      if (!currentVote && commentAuthor && commentAuthor !== currentUser.name) {
-          try {
-              await StorageService.sendNotification({
-                  userId: commentAuthor,
-                  type: type === 'like' ? 'success' : 'warning',
-                  title: type === 'like' ? 'Новый лайк' : 'Новый дизлайк',
-                  message: `${currentUser.name} оценил ваш комментарий: ${type === 'like' ? '👍' : '👎'}`,
-                  link: `/recipe/${recipe.id}`
-              });
-          } catch(e) { console.error(e); }
+        // Update Recipe State
+        const updatedRecipe = { ...recipe, comments: updatedComments };
+        onUpdateRecipe(updatedRecipe);
+
+        // Send Notification ONLY if it's a new positive vote (or dislike if you want) and not self-vote
+        if (!currentVote && commentAuthor && commentAuthor !== currentUser.name) {
+            try {
+                await StorageService.sendNotification({
+                    userId: commentAuthor,
+                    type: type === 'like' ? 'success' : 'warning',
+                    title: type === 'like' ? 'Новый лайк' : 'Новый дизлайк',
+                    message: `${currentUser.name} оценил ваш комментарий: ${type === 'like' ? '👍' : '👎'}`,
+                    link: `/recipe/${recipe.id}`
+                });
+            } catch(e) { console.error(e); }
+        }
+      } finally {
+        // Unlock after short delay to prevent machine-gun clicking
+        setTimeout(() => {
+            setProcessingVotes(prev => { const next = new Set(prev); next.delete(commentId); return next; });
+        }, 500);
       }
   };
 
@@ -334,6 +350,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       const liveAvatar = liveUser?.avatar;
       const userRole = liveUser?.role || 'user';
       const displayAvatar = liveAvatar || comment.userAvatar;
+      const isLocked = processingVotes.has(comment.id);
 
       return (
           <div key={comment.id} className={`flex gap-3 sm:gap-4 ${isReply ? 'ml-8 sm:ml-12 mt-3 border-l-2 border-gray-100 dark:border-gray-800 pl-4' : 'p-4 sm:p-6 rounded-2xl glass-panel dark:bg-gray-800/50 border dark:border-gray-700'}`}>
@@ -375,9 +392,10 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                     
                     <div className="flex items-center gap-4">
                         {/* Interactive Likes/Dislikes */}
-                        <div className="flex items-center gap-3 bg-gray-50 dark:bg-black/20 px-2 py-1 rounded-lg border border-gray-100 dark:border-gray-700">
+                        <div className={`flex items-center gap-3 bg-gray-50 dark:bg-black/20 px-2 py-1 rounded-lg border border-gray-100 dark:border-gray-700 ${isLocked ? 'opacity-50 cursor-wait' : ''}`}>
                             <button 
                                 onClick={() => handleVote(comment.id, 'like', parentId, comment.user)}
+                                disabled={isLocked}
                                 className={`flex items-center gap-1 text-xs font-medium transition-colors p-1 rounded hover:bg-white dark:hover:bg-white/10 ${userVote === 'like' ? 'text-emerald-600' : 'text-gray-500 hover:text-emerald-600'}`}
                             >
                                 <ThumbsUp className={`w-3.5 h-3.5 ${userVote === 'like' ? 'fill-current' : ''}`} />
@@ -386,6 +404,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                             <div className="w-px h-3 bg-gray-300 dark:bg-gray-600"></div>
                             <button 
                                 onClick={() => handleVote(comment.id, 'dislike', parentId, comment.user)}
+                                disabled={isLocked}
                                 className={`flex items-center gap-1 text-xs font-medium transition-colors p-1 rounded hover:bg-white dark:hover:bg-white/10 ${userVote === 'dislike' ? 'text-red-500' : 'text-gray-500 hover:text-red-500'}`}
                             >
                                 <ThumbsDown className={`w-3.5 h-3.5 ${userVote === 'dislike' ? 'fill-current' : ''}`} />

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag, Trash2 } from 'lucide-react';
+import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag, Trash2, ArrowLeft } from 'lucide-react';
 import { User, Recipe } from '../types';
 import { StorageService } from '../services/storage';
 import NotificationCenter from './NotificationCenter';
@@ -17,6 +17,7 @@ interface NavbarProps {
   onRecipeSelect?: (recipe: Recipe) => void;
   availableTags?: string[];
   selectedTags?: string[];
+  onNavigate?: (link: string) => void;
 }
 
 const Navbar: React.FC<NavbarProps> = ({ 
@@ -31,7 +32,8 @@ const Navbar: React.FC<NavbarProps> = ({
   onAdminClick,
   onRecipeSelect,
   availableTags = [],
-  selectedTags = []
+  selectedTags = [],
+  onNavigate
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<Recipe[]>([]);
@@ -75,7 +77,7 @@ const Navbar: React.FC<NavbarProps> = ({
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) setShowSuggestions(false);
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) setIsUserMenuOpen(false);
       if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
-          // Only close on desktop click-outside, mobile uses X button usually
+          // Only close on desktop click-outside. Mobile uses explicit close buttons.
           if (window.innerWidth >= 640) setIsFilterOpen(false);
       }
     };
@@ -110,6 +112,7 @@ const Navbar: React.FC<NavbarProps> = ({
       const newTags = selectedTags.includes(tag) 
           ? selectedTags.filter(t => t !== tag) 
           : [...selectedTags, tag];
+      // Trigger search immediately
       onSearch(searchQuery, newTags);
   };
 
@@ -140,7 +143,7 @@ const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           <div className="hidden md:flex flex-1 max-w-xl mx-8 relative items-center gap-2" ref={searchRef}>
-            {/* Filter Dropdown */}
+            {/* Filter Dropdown (Desktop) */}
             <div className="relative" ref={filterRef}>
                 <button 
                     type="button"
@@ -153,80 +156,63 @@ const Navbar: React.FC<NavbarProps> = ({
                 </button>
                 
                 {isFilterOpen && (
-                    <>
-                        {/* Mobile Overlay Backdrop */}
-                        <div className="fixed inset-0 bg-black/60 z-40 sm:hidden backdrop-blur-sm" onClick={() => setIsFilterOpen(false)} />
-                        
-                        {/* Dropdown / Mobile Panel */}
-                        <div className="fixed inset-x-0 bottom-0 top-16 z-50 flex flex-col bg-white dark:bg-gray-900 shadow-2xl border-t border-gray-200 dark:border-gray-700 sm:border sm:absolute sm:inset-auto sm:top-full sm:left-0 sm:mt-2 sm:w-80 sm:max-h-[600px] sm:rounded-xl animate-fade-in">
-                            
-                            {/* Header */}
-                            <div className="flex items-center justify-between p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 rounded-t-xl">
-                                <h4 className="text-sm font-bold uppercase text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                                    <Tag className="w-4 h-4" /> Теги {selectedTags.length > 0 && `(${selectedTags.length})`}
-                                </h4>
-                                <div className="flex items-center gap-2">
-                                    {selectedTags.length > 0 && (
-                                        <button onClick={clearAllTags} className="text-xs font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded-md transition-colors" title="Сбросить все">
-                                            Сбросить
-                                        </button>
-                                    )}
-                                    <button onClick={() => setIsFilterOpen(false)} className="sm:hidden p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700">
-                                        <X className="w-5 h-5 text-gray-500" />
+                    <div className="absolute top-full left-0 mt-2 w-80 max-h-[600px] flex flex-col bg-white dark:bg-gray-900 shadow-2xl border border-gray-200 dark:border-gray-700 rounded-xl animate-fade-in z-50">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 rounded-t-xl">
+                            <h4 className="text-sm font-bold uppercase text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                                <Tag className="w-4 h-4" /> Теги {selectedTags.length > 0 && `(${selectedTags.length})`}
+                            </h4>
+                            {selectedTags.length > 0 && (
+                                <button onClick={clearAllTags} className="text-xs font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded-md transition-colors" title="Сбросить все">
+                                    Сбросить
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="p-3 bg-white dark:bg-gray-900">
+                            <div className="relative">
+                                <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                                <input 
+                                    type="text" 
+                                    className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-transparent focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white transition-all" 
+                                    placeholder="Найти категорию..."
+                                    value={tagSearchQuery}
+                                    onChange={(e) => setTagSearchQuery(e.target.value)}
+                                    autoFocus
+                                />
+                                {tagSearchQuery && (
+                                    <button onClick={() => setTagSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                                        <X className="w-4 h-4" />
                                     </button>
-                                </div>
-                            </div>
-
-                            {/* Search Input */}
-                            <div className="p-3 bg-white dark:bg-gray-900">
-                                <div className="relative">
-                                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
-                                    <input 
-                                        type="text" 
-                                        className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-transparent focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white transition-all" 
-                                        placeholder="Найти категорию..."
-                                        value={tagSearchQuery}
-                                        onChange={(e) => setTagSearchQuery(e.target.value)}
-                                        autoFocus={window.innerWidth >= 640} // Autofocus only on desktop to prevent keyboard jump on mobile
-                                    />
-                                    {tagSearchQuery && (
-                                        <button onClick={() => setTagSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
-                                            <X className="w-4 h-4" />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Tags List */}
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-0">
-                                <div className="flex flex-wrap gap-2">
-                                    {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
-                                        <button
-                                            key={tag}
-                                            onClick={() => toggleTag(tag)}
-                                            className={`text-sm sm:text-xs px-3 py-2 sm:py-1.5 rounded-lg border transition-all active:scale-95 ${
-                                                selectedTags.includes(tag) 
-                                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20' 
-                                                : 'bg-gray-50 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-500 hover:bg-white dark:hover:bg-gray-800'
-                                            }`}
-                                        >
-                                            {tag}
-                                        </button>
-                                    )) : (
-                                        <div className="w-full py-8 text-center flex flex-col items-center text-gray-400">
-                                            <Search className="w-8 h-8 mb-2 opacity-20" />
-                                            <p className="text-sm">Ничего не найдено</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                            
-                            {/* Footer hint (optional) */}
-                            <div className="p-2 text-center border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl sm:block hidden">
-                                <p className="text-[10px] text-gray-400">Выберите теги для фильтрации</p>
+                                )}
                             </div>
                         </div>
-                    </>
+
+                        {/* Tags List */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-0 max-h-[300px]">
+                            <div className="flex flex-wrap gap-2">
+                                {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
+                                    <button
+                                        key={tag}
+                                        onClick={() => toggleTag(tag)}
+                                        className={`text-xs px-3 py-1.5 rounded-lg border transition-all active:scale-95 ${
+                                            selectedTags.includes(tag) 
+                                            ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20' 
+                                            : 'bg-gray-50 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-500 hover:bg-white dark:hover:bg-gray-800'
+                                        }`}
+                                    >
+                                        {tag}
+                                    </button>
+                                )) : (
+                                    <div className="w-full py-8 text-center flex flex-col items-center text-gray-400">
+                                        <Search className="w-8 h-8 mb-2 opacity-20" />
+                                        <p className="text-sm">Ничего не найдено</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 )}
             </div>
 
@@ -254,7 +240,7 @@ const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center gap-1 sm:gap-3">
              <button onClick={() => setIsMobileSearchOpen(!isMobileSearchOpen)} className={`md:hidden p-2 rounded-full transition-colors ${isMobileSearchOpen ? 'bg-emerald-100 text-emerald-600' : 'hover:bg-gray-100 text-gray-600'}`}>{isMobileSearchOpen ? <X className="w-5 h-5" /> : <Search className="w-5 h-5" />}</button>
              <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-white/5 transition-colors text-gray-600 dark:text-gray-300">{isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}</button>
-            <NotificationCenter currentUser={currentUser} />
+            <NotificationCenter currentUser={currentUser} onNavigate={onNavigate} />
             <div className="relative" ref={userMenuRef}>
                 {currentUser ? (
                   <>
@@ -312,13 +298,79 @@ const Navbar: React.FC<NavbarProps> = ({
              </form>
              <div className="mt-3 flex items-center justify-between">
                 <button 
-                    onClick={() => setIsFilterOpen(true)}
+                    onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setIsFilterOpen(true);
+                    }}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${selectedTags.length > 0 ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-200 text-gray-600'}`}
                 >
                     <Filter className="w-3.5 h-3.5" /> 
                     Фильтры {selectedTags.length > 0 && `(${selectedTags.length})`}
                 </button>
              </div>
+        </div>
+      )}
+
+      {/* Mobile Filter Fullscreen Overlay */}
+      {isFilterOpen && (
+        <div className="fixed inset-0 z-[60] bg-white dark:bg-gray-900 sm:hidden flex flex-col animate-slide-up">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800">
+                <button onClick={() => setIsFilterOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">
+                    <ArrowLeft className="w-6 h-6 text-gray-600 dark:text-gray-300" />
+                </button>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    <Tag className="w-5 h-5" /> Фильтры
+                </h2>
+                {selectedTags.length > 0 ? (
+                    <button onClick={clearAllTags} className="text-sm font-bold text-red-500">Сбросить</button>
+                ) : <div className="w-10" />}
+            </div>
+            
+            <div className="p-4 border-b border-gray-100 dark:border-gray-800">
+                <div className="relative">
+                    <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                    <input 
+                        type="text" 
+                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 border-none outline-none text-gray-900 dark:text-white"
+                        placeholder="Поиск тегов..."
+                        value={tagSearchQuery}
+                        onChange={(e) => setTagSearchQuery(e.target.value)}
+                    />
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+                 <div className="flex flex-wrap gap-3">
+                    {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
+                        <button
+                            key={tag}
+                            onClick={() => toggleTag(tag)}
+                            className={`px-4 py-2 rounded-xl border text-sm font-medium transition-all ${
+                                selectedTags.includes(tag) 
+                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/30' 
+                                : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+                            }`}
+                        >
+                            {tag}
+                        </button>
+                    )) : (
+                        <div className="w-full py-20 text-center flex flex-col items-center text-gray-400">
+                            <Search className="w-12 h-12 mb-4 opacity-20" />
+                            <p>Ничего не найдено</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+            
+            <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
+                <button 
+                    onClick={() => setIsFilterOpen(false)}
+                    className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/30 active:scale-95 transition-transform"
+                >
+                    Готово ({selectedTags.length})
+                </button>
+            </div>
         </div>
       )}
     </nav>

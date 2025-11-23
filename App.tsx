@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import RecipeCard from './components/RecipeCard';
@@ -267,6 +266,35 @@ const AppContent: React.FC = () => {
     window.scrollTo(0, 0);
   }, []);
 
+  // Handle Navigation from Notifications
+  const handleNotificationNavigation = useCallback(async (link: string) => {
+      if (!link) return;
+
+      // Extract ID from /recipe/:id
+      if (link.startsWith('/recipe/')) {
+          const id = link.split('/recipe/')[1];
+          if (id) {
+              // Check if we have it in memory first
+              const existing = recipes.find(r => r.id === id);
+              if (existing) {
+                  handleRecipeClick(existing);
+              } else {
+                  // Fetch it
+                  try {
+                      const fetched = await StorageService.getRecipesByIds([id]);
+                      if (fetched && fetched.length > 0) {
+                          handleRecipeClick(fetched[0]);
+                      } else {
+                          showAlert('Ошибка', 'Рецепт не найден или был удален.');
+                      }
+                  } catch (e) {
+                      showAlert('Ошибка', 'Не удалось загрузить рецепт.');
+                  }
+              }
+          }
+      }
+  }, [recipes, handleRecipeClick, showAlert]);
+
   const handleUserProfileClick = useCallback((userName: string) => {
       if (currentUser && currentUser.name === userName) {
           setView(AppView.PROFILE);
@@ -388,6 +416,7 @@ const AppContent: React.FC = () => {
         onRecipeSelect={handleRecipeClick}
         availableTags={availableTags}
         selectedTags={selectedTags}
+        onNavigate={handleNotificationNavigation}
       />
 
       <main className="flex-grow pt-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">

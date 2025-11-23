@@ -6,9 +6,10 @@ import { useModal } from './ModalProvider';
 
 interface NotificationCenterProps {
     currentUser: User | null;
+    onNavigate?: (link: string) => void;
 }
 
-const NotificationCenter: React.FC<NotificationCenterProps> = ({ currentUser }) => {
+const NotificationCenter: React.FC<NotificationCenterProps> = ({ currentUser, onNavigate }) => {
     const { showConfirm } = useModal();
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -81,6 +82,14 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ currentUser }) 
         await StorageService.deleteReadNotifications(currentUser.name);
         setNotifications(prev => prev.filter(n => !n.isRead));
         setIsProcessing(false);
+    };
+
+    const handleLinkClick = (e: React.MouseEvent, link: string) => {
+        e.preventDefault();
+        setIsOpen(false);
+        if (onNavigate) {
+            onNavigate(link);
+        }
     };
 
     const getIcon = (type: string) => {
@@ -181,9 +190,12 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ currentUser }) 
                                                         {new Date(notif.createdAt).toLocaleString()}
                                                     </span>
                                                     {notif.link && (
-                                                        <a href="#" className="flex items-center gap-1 text-xs text-blue-500 hover:underline">
+                                                        <button 
+                                                            onClick={(e) => handleLinkClick(e, notif.link!)}
+                                                            className="flex items-center gap-1 text-xs text-blue-500 hover:underline"
+                                                        >
                                                             Перейти <ExternalLink className="w-3 h-3" />
-                                                        </a>
+                                                        </button>
                                                     )}
                                                 </div>
                                             </div>
