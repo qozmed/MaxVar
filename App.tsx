@@ -9,7 +9,7 @@ import AdminPanel from './components/AdminPanel';
 import { ModalProvider, useModal } from './components/ModalProvider';
 import { Recipe, User, AppView } from './types';
 import { StorageService } from './services/storage';
-import { Star, MessageCircle, Loader2, ChevronDown, WifiOff } from 'lucide-react';
+import { Star, MessageCircle, Loader2, ChevronDown, WifiOff, X } from 'lucide-react';
 
 const ITEMS_PER_PAGE = 12;
 
@@ -27,8 +27,11 @@ const AppContent: React.FC = () => {
   const [featuredRecipes, setFeaturedRecipes] = useState<Recipe[]>([]);
   const [discussedRecipes, setDiscussedRecipes] = useState<Recipe[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]); // Store all users for avatars lookup
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
   
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
   const [currentPage, setCurrentPage] = useState(1);
   const [totalRecipes, setTotalRecipes] = useState(0);
   const [isLoadingRecipes, setIsLoadingRecipes] = useState(false);
@@ -37,7 +40,7 @@ const AppContent: React.FC = () => {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // Initialize App Data
+  // Initialize App Data & Restore State
   useEffect(() => {
     const initApp = async () => {
       await StorageService.initialize();
@@ -51,13 +54,78 @@ const AppContent: React.FC = () => {
       if (theme) document.documentElement.classList.add('dark');
       else document.documentElement.classList.remove('dark');
 
-      // Initial Fetch
-      await fetchMainContent();
+      // Fetch Tags
+      const tags = await StorageService.getAllTags();
+      setAvailableTags(tags);
+
+      // --- RESTORE STATE LOGIC ---
+      const savedState = StorageService.getAppState();
+      let restored = false;
+
+      if (savedState) {
+          if (savedState.searchQuery) setSearchQuery(savedState.searchQuery);
+          if (savedState.tags) setSelectedTags(savedState.tags);
+
+          if (savedState.view === AppView.RECIPE_DETAIL && savedState.selectedRecipeId) {
+             try {
+                const recipes = await StorageService.getRecipesByIds([savedState.selectedRecipeId]);
+                if (recipes.length > 0) {
+                    setSelectedRecipe(recipes[0]);
+                    setView(AppView.RECIPE_DETAIL);
+                    restored = true;
+                }
+             } catch (e) { console.warn("Failed to restore recipe view"); }
+          } else if (savedState.view === AppView.PUBLIC_PROFILE && savedState.viewingUserEmail) {
+             try {
+                // Try to find in cache first
+                let user = StorageService.getAllUsers().find(u => u.email === savedState.viewingUserEmail);
+                if (!user) {
+                    // Force refresh users if not found
+                     await StorageService.refreshUsers();
+                     user = StorageService.getAllUsers().find(u => u.email === savedState.viewingUserEmail);
+                }
+                if (user) {
+                    setViewingUser(user);
+                    setView(AppView.PUBLIC_PROFILE);
+                    restored = true;
+                }
+             } catch (e) { console.warn("Failed to restore profile view"); }
+          } else if (savedState.view === AppView.PROFILE && StorageService.getUser()) {
+              setView(AppView.PROFILE);
+              restored = true;
+          } else if (savedState.view === AppView.ADMIN && StorageService.getUser()?.role === 'admin') {
+              setView(AppView.ADMIN);
+              restored = true;
+          }
+      }
+
+      // Initial Fetch (if not restored to a specific detail view, load feed)
+      if (!restored || savedState?.view === AppView.HOME) {
+          await fetchMainContent(savedState?.searchQuery || '', savedState?.tags || []);
+      } else {
+          // Still fetch main content in background so navigation back works
+          fetchMainContent(savedState?.searchQuery || '', savedState?.tags || []);
+      }
 
       setIsInitialized(true);
     };
     initApp();
   }, []);
+
+  // --- PERSISTENCE EFFECT ---
+  useEffect(() => {
+      if (!isInitialized) return;
+      
+      const stateToSave = {
+          view,
+          selectedRecipeId: selectedRecipe?.id,
+          viewingUserEmail: viewingUser?.email,
+          searchQuery,
+          tags: selectedTags
+      };
+      StorageService.saveAppState(stateToSave);
+  }, [view, selectedRecipe, viewingUser, searchQuery, selectedTags, isInitialized]);
+
 
   // Defined here to be used in subscription
   const performLogout = useCallback(async () => {
@@ -73,15 +141,10 @@ const AppContent: React.FC = () => {
           if (type === 'RECIPE_UPDATED') {
               const updatedRecipe = payload as Recipe;
               
-              // 1. Update the list if the recipe is present
               setRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
-              
-              // 2. Update the featured/discussed lists if present
               setFeaturedRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
               setDiscussedRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
 
-              // 3. Update the selected recipe if it's the one currently open
-              // Note: We use the function form of setSelectedRecipe to access the current state value reliably
               setSelectedRecipe(currentSelected => {
                   if (currentSelected && currentSelected.id === updatedRecipe.id) {
                       return updatedRecipe;
@@ -89,12 +152,10 @@ const AppContent: React.FC = () => {
                   return currentSelected;
               });
           } else if (type === 'RECIPES_IMPORTED') {
-              // Reload feed if bulk import happened
-              fetchMainContent();
+              fetchMainContent(searchQuery, selectedTags);
           } else if (type === 'USER_UPDATED') {
               const updatedUser = payload as User;
               
-              // A. Update Global User List (for avatars in comments)
               setAllUsers(prev => {
                   const idx = prev.findIndex(u => u.email === updatedUser.email);
                   if (idx >= 0) {
@@ -105,7 +166,6 @@ const AppContent: React.FC = () => {
                   return [...prev, updatedUser];
               });
 
-              // B. Update Viewing User (Real-time Public Profile)
               setViewingUser(prevViewing => {
                   if (prevViewing && prevViewing.email === updatedUser.email) {
                       return updatedUser;
@@ -113,13 +173,9 @@ const AppContent: React.FC = () => {
                   return prevViewing;
               });
               
-              // C. Update Current Session User
               const currentSessionUser = StorageService.getUser();
               if (currentSessionUser && currentSessionUser.email === updatedUser.email) {
-                  // Update local user state to reflect changes (e.g. bio, avatar)
                   setCurrentUser(updatedUser);
-                  
-                  // CRITICAL: Check for Ban Status
                   if (updatedUser.isBanned) {
                       performLogout();
                       showAlert('Доступ ограничен', 'Ваш аккаунт был заблокирован администратором.', 'error');
@@ -129,13 +185,13 @@ const AppContent: React.FC = () => {
       });
 
       return () => unsubscribe();
-  }, [performLogout, showAlert]);
+  }, [performLogout, showAlert, searchQuery, selectedTags]);
 
-  const fetchMainContent = async () => {
+  const fetchMainContent = async (query: string = '', tags: string[] = []) => {
       setIsLoadingRecipes(true);
       try {
-          // 1. Fetch Main Feed (Newest)
-          const result = await StorageService.searchRecipes('', 1, ITEMS_PER_PAGE, 'newest');
+          // 1. Fetch Main Feed (Newest with Filters)
+          const result = await StorageService.searchRecipes(query, 1, ITEMS_PER_PAGE, 'newest', tags);
           setRecipes(result.data);
           setTotalRecipes(result.pagination.total);
           setCurrentPage(1);
@@ -143,13 +199,17 @@ const AppContent: React.FC = () => {
           // Check offline status again after request
           setIsOffline(StorageService.isOfflineMode);
 
-          // 2. Fetch Featured (Popular) - Separate call to get best rated
-          const featured = await StorageService.searchRecipes('', 1, 3, 'popular');
-          setFeaturedRecipes(featured.data);
+          // 2. Fetch Featured (Popular) - Only if no search active
+          if (!query && tags.length === 0) {
+            const featured = await StorageService.searchRecipes('', 1, 3, 'popular');
+            setFeaturedRecipes(featured.data);
 
-           // 3. Fetch Discussed
-           const discussed = await StorageService.searchRecipes('', 1, 3, 'discussed');
-           setDiscussedRecipes(discussed.data);
+            const discussed = await StorageService.searchRecipes('', 1, 3, 'discussed');
+            setDiscussedRecipes(discussed.data);
+          } else {
+              setFeaturedRecipes([]);
+              setDiscussedRecipes([]);
+          }
 
       } catch (e) {
           console.error("Failed to load main content", e);
@@ -162,7 +222,7 @@ const AppContent: React.FC = () => {
       const nextPage = currentPage + 1;
       setIsLoadingRecipes(true);
       try {
-          const result = await StorageService.searchRecipes(searchQuery, nextPage, ITEMS_PER_PAGE);
+          const result = await StorageService.searchRecipes(searchQuery, nextPage, ITEMS_PER_PAGE, 'newest', selectedTags);
           setRecipes(prev => [...prev, ...result.data]); // Append new recipes
           setCurrentPage(nextPage);
       } catch (e) {
@@ -173,47 +233,48 @@ const AppContent: React.FC = () => {
   };
 
   // Handle search
-  const handleSearch = useCallback(async (query: string) => {
+  const handleSearch = useCallback(async (query: string, tags: string[] = []) => {
     setSearchQuery(query);
+    setSelectedTags(tags);
     setView(AppView.HOME);
-    setIsLoadingRecipes(true);
-    setCurrentPage(1);
-    try {
-        const result = await StorageService.searchRecipes(query, 1, ITEMS_PER_PAGE);
-        setRecipes(result.data);
-        setTotalRecipes(result.pagination.total);
-    } catch (e) {
-        console.error("Search failed", e);
-    } finally {
-        setIsLoadingRecipes(false);
-    }
+    await fetchMainContent(query, tags);
   }, []);
+
+  const handleTagClick = useCallback((tag: string) => {
+      // When a tag is clicked, reset search query but filter by this tag
+      setSearchQuery('');
+      const newTags = [tag];
+      setSelectedTags(newTags);
+      setView(AppView.HOME);
+      window.scrollTo(0, 0);
+      fetchMainContent('', newTags);
+  }, []);
+
+  const handleClearTag = (tagToRem: string) => {
+      const newTags = selectedTags.filter(t => t !== tagToRem);
+      setSelectedTags(newTags);
+      fetchMainContent(searchQuery, newTags);
+  };
 
   // Handle recipe click
   const handleRecipeClick = useCallback((recipe: Recipe) => {
     setSelectedRecipe(recipe);
     setView(AppView.RECIPE_DETAIL);
     window.scrollTo(0, 0);
-    // Don't clear search query, so user can go back to results
   }, []);
 
   const handleUserProfileClick = useCallback((userName: string) => {
-      // If user clicks on their own name, go to private profile
       if (currentUser && currentUser.name === userName) {
           setView(AppView.PROFILE);
           window.scrollTo(0, 0);
           return;
       }
-      
-      // Find user in cache (using the updated list)
       const foundUser = allUsers.find(u => u.name === userName);
-      
       if (foundUser) {
           setViewingUser(foundUser);
           setView(AppView.PUBLIC_PROFILE);
           window.scrollTo(0, 0);
       } else {
-          // Fallback if allUsers isn't perfectly synced yet, try storage direct
           const storeUsers = StorageService.getAllUsers();
           const fallbackFound = storeUsers.find(u => u.name === userName);
           if (fallbackFound) {
@@ -226,7 +287,6 @@ const AppContent: React.FC = () => {
       }
   }, [currentUser, allUsers, showAlert]);
 
-  // Memoize user map for quick avatar lookup in comments
   const userMap = useMemo(() => {
       const map: Record<string, User> = {};
       allUsers.forEach(u => {
@@ -235,7 +295,6 @@ const AppContent: React.FC = () => {
       return map;
   }, [allUsers]);
 
-  // Show loading screen while initializing
   if (!isInitialized) {
       return (
           <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 text-emerald-600">
@@ -270,9 +329,6 @@ const AppContent: React.FC = () => {
   };
 
   const handleBack = () => {
-    // If we came from Public Profile to Recipe, going back might be tricky logic
-    // For simplicity, back always goes Home or to previous logical view if state history was better
-    // But currently handleBack resets to HOME usually.
     setSelectedRecipe(null);
     setView(AppView.HOME);
   };
@@ -282,35 +338,26 @@ const AppContent: React.FC = () => {
         setIsAuthOpen(true);
         return;
     }
-    
     const currentFavorites = currentUser.favorites || [];
     let newFavorites;
-    
     if (currentFavorites.includes(recipeId)) {
         newFavorites = currentFavorites.filter(id => id !== recipeId);
     } else {
         newFavorites = [...currentFavorites, recipeId];
     }
-
     const updatedUser = {
         ...currentUser,
         favorites: newFavorites
     };
-    
     setCurrentUser(updatedUser);
     await StorageService.saveUser(updatedUser);
     await StorageService.updateUserInDB(updatedUser);
   };
 
   const handleRecipeUpdate = async (updatedRecipe: Recipe, userRateScore?: number) => {
-      // Optimistic update for the triggering user
-      // But server will also broadcast the update via SSE which will confirm it
       await StorageService.saveRecipe(updatedRecipe);
-      
-      // We manually update state here to give instant feedback before the SSE roundtrip
       setSelectedRecipe(updatedRecipe);
       setRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
-      
       if (userRateScore !== undefined && currentUser) {
           const updatedUser = {
               ...currentUser,
@@ -331,10 +378,12 @@ const AppContent: React.FC = () => {
         onLogout={handleUserLogout}
         toggleTheme={toggleTheme}
         isDarkMode={isDarkMode}
-        goHome={() => { handleSearch(''); }}
+        goHome={() => handleSearch('', [])}
         onProfileClick={() => { setView(AppView.PROFILE); window.scrollTo(0,0); }}
         onAdminClick={() => { setView(AppView.ADMIN); window.scrollTo(0,0); }}
         onRecipeSelect={handleRecipeClick}
+        availableTags={availableTags}
+        selectedTags={selectedTags}
       />
 
       <main className="flex-grow pt-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
@@ -349,7 +398,7 @@ const AppContent: React.FC = () => {
         {view === AppView.HOME && (
           <div className="animate-fade-in">
              {/* Hero Section - only when no search active */}
-             {!searchQuery && (
+             {!searchQuery && selectedTags.length === 0 && (
                  <div className="text-center py-8 sm:py-12 md:py-20">
                     <span className="text-emerald-600 dark:text-emerald-400 font-bold tracking-widest uppercase text-xs sm:text-sm mb-2 block">
                       Кулинарное Вдохновение
@@ -363,8 +412,21 @@ const AppContent: React.FC = () => {
                  </div>
              )}
 
+             {/* Selected Tags Display */}
+             {selectedTags.length > 0 && (
+                 <div className="flex flex-wrap gap-2 justify-center mb-8">
+                     {selectedTags.map(tag => (
+                         <div key={tag} className="flex items-center gap-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-bold">
+                             <span>#{tag}</span>
+                             <button onClick={() => handleClearTag(tag)} className="hover:text-emerald-900"><X className="w-4 h-4"/></button>
+                         </div>
+                     ))}
+                     <button onClick={() => handleSearch(searchQuery, [])} className="text-sm text-gray-500 underline hover:text-emerald-600">Сбросить</button>
+                 </div>
+             )}
+
              {/* Feeds - Only show if no search */}
-             {!searchQuery && (
+             {!searchQuery && selectedTags.length === 0 && (
                <div className="space-y-12 sm:space-y-16 mb-12 sm:mb-16">
                   {featuredRecipes.length > 0 && (
                       <section>
@@ -374,7 +436,7 @@ const AppContent: React.FC = () => {
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                              {featuredRecipes.map(recipe => (
-                                <RecipeCard key={recipe.id} recipe={recipe} onClick={handleRecipeClick} />
+                                <RecipeCard key={recipe.id} recipe={recipe} onClick={handleRecipeClick} onTagClick={handleTagClick} />
                              ))}
                           </div>
                       </section>
@@ -388,7 +450,7 @@ const AppContent: React.FC = () => {
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                              {discussedRecipes.map(recipe => (
-                                <RecipeCard key={recipe.id} recipe={recipe} onClick={handleRecipeClick} />
+                                <RecipeCard key={recipe.id} recipe={recipe} onClick={handleRecipeClick} onTagClick={handleTagClick} />
                              ))}
                           </div>
                       </section>
@@ -401,7 +463,7 @@ const AppContent: React.FC = () => {
                 <div className="flex items-center gap-2 mb-6">
                     <div className="h-px flex-grow bg-gray-200 dark:bg-gray-800"></div>
                     <h2 className="font-serif text-lg sm:text-2xl font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest text-center whitespace-nowrap">
-                        {searchQuery ? `Поиск: "${searchQuery}"` : "Все Рецепты"}
+                        {searchQuery || selectedTags.length > 0 ? "Результаты поиска" : "Свежие Рецепты"}
                     </h2>
                     <div className="h-px flex-grow bg-gray-200 dark:bg-gray-800"></div>
                 </div>
@@ -412,7 +474,7 @@ const AppContent: React.FC = () => {
                    <>
                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
                         {recipes.map(recipe => (
-                          <RecipeCard key={recipe.id} recipe={recipe} onClick={handleRecipeClick} />
+                          <RecipeCard key={recipe.id} recipe={recipe} onClick={handleRecipeClick} onTagClick={handleTagClick} />
                         ))}
                      </div>
                      
@@ -455,7 +517,8 @@ const AppContent: React.FC = () => {
             onUpdateRecipe={handleRecipeUpdate}
             onUpdateUser={handleUpdateUserProfile}
             onUserClick={handleUserProfileClick}
-            userMap={userMap} // Pass the live map of users for avatars
+            userMap={userMap}
+            onTagClick={handleTagClick}
           />
         )}
 
@@ -465,6 +528,7 @@ const AppContent: React.FC = () => {
                 favorites={currentUser.favorites}
                 onUpdateUser={handleUpdateUserProfile}
                 onRecipeClick={handleRecipeClick}
+                onTagClick={handleTagClick}
             />
         )}
         
@@ -475,6 +539,7 @@ const AppContent: React.FC = () => {
                 onRecipeClick={handleRecipeClick}
                 isReadOnly={true}
                 onBack={handleBack}
+                onTagClick={handleTagClick}
             />
         )}
 
@@ -483,6 +548,7 @@ const AppContent: React.FC = () => {
                 currentUser={currentUser}
                 onBack={() => setView(AppView.HOME)}
                 onRecipeSelect={handleRecipeClick}
+                onTagClick={handleTagClick}
             />
         )}
       </main>

@@ -5,6 +5,7 @@ import { Recipe } from '../types';
 interface RecipeCardProps {
   recipe: Recipe;
   onClick: (recipe: Recipe) => void;
+  onTagClick?: (tag: string) => void;
 }
 
 // Palette of foodie-gradients
@@ -19,7 +20,7 @@ const GRADIENTS = [
   'from-violet-400 to-fuchsia-500',    // Rich
 ];
 
-const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onClick }) => {
+const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onClick, onTagClick }) => {
   // Safe guard against corrupt data
   if (!recipe || !recipe.parsed_content) return null;
 
@@ -36,6 +37,11 @@ const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onClick }) => {
   };
 
   const gradientClass = getGradient(recipe.id);
+
+  const handleTagClick = (e: React.MouseEvent, tag: string) => {
+      e.stopPropagation();
+      if (onTagClick) onTagClick(tag);
+  };
 
   return (
     <div 
@@ -83,9 +89,13 @@ const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onClick }) => {
         <div className="absolute bottom-3 left-3 right-3 z-20">
             <div className="flex flex-wrap gap-2 mb-1">
                 {(recipe.parsed_content.tags || []).slice(0, 2).map(tag => (
-                    <span key={tag} className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md bg-white/20 backdrop-blur-md border border-white/20 text-white shadow-lg">
+                    <button 
+                        key={tag} 
+                        onClick={(e) => handleTagClick(e, tag)}
+                        className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md bg-white/20 backdrop-blur-md border border-white/20 text-white shadow-lg hover:bg-white/40 transition-colors"
+                    >
                         {tag}
-                    </span>
+                    </button>
                 ))}
             </div>
         </div>

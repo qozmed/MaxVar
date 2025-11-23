@@ -1,5 +1,5 @@
 
-import { Recipe, User, RawRecipeImport, Report, Notification } from '../types';
+import { Recipe, User, RawRecipeImport, Report, Notification, AppView } from '../types';
 import { MOCK_RECIPES } from '../mockData';
 
 const generateId = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
@@ -14,11 +14,20 @@ interface RecipeResponse {
     }
 }
 
+interface AppState {
+    view: AppView;
+    selectedRecipeId?: string;
+    viewingUserEmail?: string;
+    searchQuery?: string;
+    tags?: string[];
+}
+
 type EventListener = (type: string, payload: any) => void;
 
 class StorageServiceImpl {
   private recipesCache: Recipe[] = [];
   private usersCache: User[] = [];
+  private tagsCache: string[] = [];
   private currentUserCache: User | null = null;
   private isDarkTheme: boolean = false;
   public isOfflineMode: boolean = false;
@@ -115,6 +124,27 @@ class StorageServiceImpl {
       } catch(e) { console.warn("Users fetch failed"); }
   }
 
+  public async getAllTags(): Promise<string[]> {
+      if (this.tagsCache.length > 0 && this.isOfflineMode) return this.tagsCache;
+
+      try {
+          if (this.isOfflineMode) {
+              const tags = new Set<string>();
+              MOCK_RECIPES.forEach(r => r.parsed_content?.tags?.forEach(t => tags.add(t)));
+              this.tagsCache = Array.from(tags).sort();
+              return this.tagsCache;
+          }
+
+          const response = await fetch('/api/tags');
+          if (response.ok) {
+              this.tagsCache = await response.json();
+          }
+      } catch (e) {
+          console.warn("Failed to fetch tags");
+      }
+      return this.tagsCache;
+  }
+
   async getRecipesByIds(ids: string[]): Promise<Recipe[]> {
       if (!ids || ids.length === 0) return [];
 
@@ -139,7 +169,7 @@ class StorageServiceImpl {
       }
   }
 
-  async searchRecipes(query: string = '', page: number = 1, limit: number = 12, sort: string = 'newest'): Promise<RecipeResponse> {
+  async searchRecipes(query: string = '', page: number = 1, limit: number = 12, sort: string = 'newest', tags: string[] = []): Promise<RecipeResponse> {
       try {
           if (this.isOfflineMode) throw new Error("Offline mode active");
 
@@ -149,6 +179,10 @@ class StorageServiceImpl {
               search: query,
               sort: sort
           });
+
+          if (tags.length > 0) {
+              params.append('tags', tags.join(','));
+          }
           
           const response = await fetch(`/api/recipes?${params.toString()}`);
           
@@ -172,15 +206,23 @@ class StorageServiceImpl {
           
           let filtered = MOCK_RECIPES; 
 
+          // Filter by Tags
+          if (tags.length > 0) {
+              filtered = filtered.filter(r => {
+                  const rTags = r.parsed_content?.tags || [];
+                  return tags.every(t => rTags.includes(t));
+              });
+          }
+
           if (query) {
             const lowerSearch = query.toLowerCase();
-            filtered = MOCK_RECIPES.filter(r => {
+            filtered = filtered.filter(r => {
               const name = r.parsed_content?.dish_name?.toLowerCase() || '';
-              const tags = r.parsed_content?.tags || [];
+              const rTags = r.parsed_content?.tags || [];
               const ings = r.parsed_content?.ingredients || [];
               
               return name.includes(lowerSearch) || 
-                     tags.some(t => t.toLowerCase().includes(lowerSearch)) ||
+                     rTags.some(t => t.toLowerCase().includes(lowerSearch)) ||
                      ings.some(i => i.toLowerCase().includes(lowerSearch));
             });
           }
@@ -448,6 +490,20 @@ class StorageServiceImpl {
   async saveTheme(isDark: boolean): Promise<void> {
       this.isDarkTheme = isDark;
       localStorage.setItem('gourmet_theme', String(isDark));
+  }
+
+  // --- PERSISTENCE ---
+  saveAppState(state: AppState): void {
+      try {
+          localStorage.setItem('gourmet_app_state', JSON.stringify(state));
+      } catch (e) { console.error(e); }
+  }
+
+  getAppState(): AppState | null {
+      try {
+          const raw = localStorage.getItem('gourmet_app_state');
+          return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
   }
 }
 

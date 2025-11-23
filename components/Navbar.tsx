@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones } from 'lucide-react';
+import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag } from 'lucide-react';
 import { User, Recipe } from '../types';
 import { StorageService } from '../services/storage';
 import NotificationCenter from './NotificationCenter';
 
 interface NavbarProps {
-  onSearch: (query: string) => void;
+  onSearch: (query: string, tags?: string[]) => void;
   currentUser: User | null;
   onAuthClick: () => void;
   onLogout: () => void;
@@ -15,6 +15,8 @@ interface NavbarProps {
   onProfileClick: () => void;
   onAdminClick: () => void;
   onRecipeSelect?: (recipe: Recipe) => void;
+  availableTags?: string[]; // New prop
+  selectedTags?: string[]; // New prop
 }
 
 const Navbar: React.FC<NavbarProps> = ({ 
@@ -27,7 +29,9 @@ const Navbar: React.FC<NavbarProps> = ({
   goHome,
   onProfileClick,
   onAdminClick,
-  onRecipeSelect
+  onRecipeSelect,
+  availableTags = [],
+  selectedTags = []
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<Recipe[]>([]);
@@ -38,16 +42,26 @@ const Navbar: React.FC<NavbarProps> = ({
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
+  // Filter Dropdown State
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [localSelectedTags, setLocalSelectedTags] = useState<string[]>(selectedTags);
+
   const searchRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
   const mobileSearchInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Sync internal tag state when props change
+  useEffect(() => {
+      setLocalSelectedTags(selectedTags);
+  }, [selectedTags]);
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
       if (searchQuery.length > 1) {
         setIsSearching(true);
         try {
-            const result = await StorageService.searchRecipes(searchQuery, 1, 5);
+            const result = await StorageService.searchRecipes(searchQuery, 1, 5, 'newest', localSelectedTags);
             setSuggestions(result.data);
             setShowSuggestions(true);
         } catch (e) { console.error(e); } finally { setIsSearching(false); }
@@ -57,13 +71,15 @@ const Navbar: React.FC<NavbarProps> = ({
       }
     }, 400);
     return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery]);
+  }, [searchQuery, localSelectedTags]);
 
   useEffect(() => { if (isMobileSearchOpen && mobileSearchInputRef.current) mobileSearchInputRef.current.focus(); }, [isMobileSearchOpen]);
+  
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) setShowSuggestions(false);
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) setIsUserMenuOpen(false);
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) setIsFilterOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -73,7 +89,8 @@ const Navbar: React.FC<NavbarProps> = ({
     e.preventDefault();
     setShowSuggestions(false);
     setIsMobileSearchOpen(false);
-    onSearch(searchQuery);
+    setIsFilterOpen(false);
+    onSearch(searchQuery, localSelectedTags);
   };
 
   const handleClearSearch = () => {
@@ -87,7 +104,18 @@ const Navbar: React.FC<NavbarProps> = ({
     setSearchQuery('');
     setShowSuggestions(false);
     setIsMobileSearchOpen(false);
-    if (onRecipeSelect) onRecipeSelect(recipe); else onSearch(recipe.parsed_content.dish_name);
+    if (onRecipeSelect) onRecipeSelect(recipe); else onSearch(recipe.parsed_content.dish_name, localSelectedTags);
+  };
+
+  const toggleTag = (tag: string) => {
+      setLocalSelectedTags(prev => 
+          prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+      );
+  };
+
+  const applyFilters = () => {
+      setIsFilterOpen(false);
+      onSearch(searchQuery, localSelectedTags);
   };
 
   const isModOrAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator');
@@ -106,15 +134,45 @@ const Navbar: React.FC<NavbarProps> = ({
             )}
           </div>
 
-          <div className="hidden md:block flex-1 max-w-md mx-8 relative" ref={searchRef}>
-            <form onSubmit={handleSearchSubmit} className="relative">
+          <div className="hidden md:flex flex-1 max-w-xl mx-8 relative items-center gap-2" ref={searchRef}>
+            {/* Filter Dropdown */}
+            <div className="relative" ref={filterRef}>
+                <button 
+                    type="button"
+                    onClick={() => setIsFilterOpen(!isFilterOpen)}
+                    className={`p-2 rounded-xl border transition-all flex items-center gap-2 ${localSelectedTags.length > 0 ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white/50 dark:bg-black/50 border-gray-200 dark:border-gray-700 hover:bg-gray-100'}`}
+                    title="Фильтр по тегам"
+                >
+                    <Filter className="w-5 h-5" />
+                    {localSelectedTags.length > 0 && <span className="text-xs font-bold bg-white/50 px-1.5 rounded-full">{localSelectedTags.length}</span>}
+                </button>
+                {isFilterOpen && (
+                    <div className="absolute top-full left-0 mt-2 w-64 max-h-80 overflow-y-auto custom-scrollbar bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-100 dark:border-gray-700 p-3 z-50 animate-fade-in">
+                        <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Теги блюд</h4>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            {availableTags.length > 0 ? availableTags.map(tag => (
+                                <button
+                                    key={tag}
+                                    onClick={() => toggleTag(tag)}
+                                    className={`text-xs px-2 py-1 rounded-md border transition-colors ${localSelectedTags.includes(tag) ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400'}`}
+                                >
+                                    {tag}
+                                </button>
+                            )) : <p className="text-xs text-gray-400">Теги загружаются...</p>}
+                        </div>
+                        <button onClick={applyFilters} className="w-full py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700">Применить</button>
+                    </div>
+                )}
+            </div>
+
+            <form onSubmit={handleSearchSubmit} className="relative flex-grow">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="h-5 w-5 text-gray-400" /></div>
               <input type="text" className="block w-full pl-10 pr-10 py-2 border border-gray-200 dark:border-gray-700 rounded-full leading-5 bg-white/50 dark:bg-black/50 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm backdrop-blur-sm transition-all duration-300" placeholder="Поиск рецептов..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onFocus={() => { if(searchQuery.length > 1) setShowSuggestions(true); }} autoComplete="off" />
               <div className="absolute inset-y-0 right-0 pr-2 flex items-center gap-1">{isSearching && <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />}{searchQuery && <button type="button" onClick={handleClearSearch} className="p-1 rounded-full text-gray-400 hover:bg-gray-100"><X className="w-4 h-4" /></button>}</div>
             </form>
 
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-white/90 dark:bg-gray-900/95 backdrop-blur-xl rounded-xl shadow-2xl border border-white/20 dark:border-gray-700 overflow-hidden animate-fade-in max-h-[400px] overflow-y-auto custom-scrollbar z-50">
+              <div className="absolute top-full left-12 right-0 mt-2 bg-white/90 dark:bg-gray-900/95 backdrop-blur-xl rounded-xl shadow-2xl border border-white/20 dark:border-gray-700 overflow-hidden animate-fade-in max-h-[400px] overflow-y-auto custom-scrollbar z-50">
                 <ul>
                   {suggestions.map((recipe) => (
                     <li key={recipe.id} onClick={() => handleSuggestionClick(recipe)} className="flex items-center gap-3 p-3 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer transition-colors border-b border-gray-100 dark:border-gray-800 last:border-0">
@@ -187,8 +245,12 @@ const Navbar: React.FC<NavbarProps> = ({
                 <input ref={mobileSearchInputRef} type="text" className="block w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-black/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-sm transition-all" placeholder="Что будем готовить?" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                 {searchQuery && <button type="button" onClick={handleClearSearch} className="absolute right-3 top-2.5 text-gray-400"><X className="w-4 h-4" /></button>}
              </form>
-             {suggestions.length > 0 && (
-                 <ul className="mt-2 divide-y divide-gray-100 dark:divide-gray-800">{suggestions.map((recipe) => (<li key={recipe.id} onClick={() => handleSuggestionClick(recipe)} className="flex items-center gap-3 py-3 active:bg-gray-50 dark:active:bg-white/5"><div className="w-8 h-8 rounded bg-gray-200 overflow-hidden flex-shrink-0">{recipe.images?.[0]?.url && <img src={recipe.images[0].url} className="w-full h-full object-cover"/>}</div><span className="text-sm text-gray-700 dark:text-gray-200 truncate flex-1">{recipe.parsed_content.dish_name}</span><ChevronRight className="w-4 h-4 text-gray-400" /></li>))}</ul>
+             {availableTags.length > 0 && (
+                <div className="mt-3 flex overflow-x-auto gap-2 pb-1 scrollbar-hide">
+                    {availableTags.slice(0, 10).map(tag => (
+                        <button key={tag} onClick={() => toggleTag(tag)} className={`text-xs px-2 py-1 rounded-md border whitespace-nowrap ${localSelectedTags.includes(tag) ? 'bg-emerald-500 text-white' : 'bg-gray-50 text-gray-600'}`}>{tag}</button>
+                    ))}
+                </div>
              )}
         </div>
       )}

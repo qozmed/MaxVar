@@ -14,6 +14,7 @@ interface UserProfileProps {
   onRecipeClick: (recipe: Recipe) => void;
   isReadOnly?: boolean; 
   onBack?: () => void;
+  onTagClick?: (tag: string) => void; // New prop
 }
 
 const DIETARY_LABELS: Record<string, string> = {
@@ -30,7 +31,8 @@ const UserProfile: React.FC<UserProfileProps> = ({
   onUpdateUser,
   onRecipeClick,
   isReadOnly = false,
-  onBack
+  onBack,
+  onTagClick
 }) => {
   const { showAlert } = useModal();
   const [isEditing, setIsEditing] = useState(false);
@@ -146,7 +148,7 @@ const UserProfile: React.FC<UserProfileProps> = ({
                     <h2 className="font-serif text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">{isReadOnly ? 'Избранные рецепты' : 'Моё Избранное'}</h2>
                     <span className="px-3 py-1 rounded-full bg-gray-100 text-xs sm:text-sm font-bold text-gray-500">{favoriteRecipesList.length}</span>
                 </div>
-                {isLoadingFavs ? <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-emerald-500" /></div> : favoriteRecipesList.length === 0 ? <div className="glass-panel rounded-3xl p-12 text-center border-dashed border-2 border-gray-300"><p className="text-gray-500 mb-4">{isReadOnly ? "Список избранного пуст." : "У вас пока нет избранных рецептов."}</p></div> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">{favoriteRecipesList.map(recipe => <RecipeCard key={recipe.id} recipe={recipe} onClick={onRecipeClick} />)}</div>}
+                {isLoadingFavs ? <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-emerald-500" /></div> : favoriteRecipesList.length === 0 ? <div className="glass-panel rounded-3xl p-12 text-center border-dashed border-2 border-gray-300"><p className="text-gray-500 mb-4">{isReadOnly ? "Список избранного пуст." : "У вас пока нет избранных рецептов."}</p></div> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">{favoriteRecipesList.map(recipe => <RecipeCard key={recipe.id} recipe={recipe} onClick={onRecipeClick} onTagClick={onTagClick} />)}</div>}
             </div>
         ) : ( isReadOnly && !showFavorites && <div className="md:col-span-1 max-w-2xl mx-auto w-full mt-8 flex flex-col items-center justify-center p-10 text-center"><div className="p-4 bg-gray-100 rounded-full mb-4"><Lock className="w-8 h-8 text-gray-400" /></div><h3 className="text-xl font-bold text-gray-700">Избранное скрыто</h3></div> )}
       </div>

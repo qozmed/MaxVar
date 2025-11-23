@@ -104,12 +104,31 @@ app.get('/api/events', (req, res) => {
   });
 });
 
+app.get('/api/tags', async (req, res) => {
+    try {
+        if (isMongoConnected) {
+            const tags = await RecipeModel.distinct('parsed_content.tags');
+            res.json(tags.filter(t => t)); // Filter nulls
+        } else {
+            const tags = new Set();
+            memRecipes.forEach(r => {
+                r.parsed_content?.tags?.forEach(t => tags.add(t));
+            });
+            res.json(Array.from(tags));
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/recipes', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 12;
     const search = req.query.search || '';
     const sort = req.query.sort || 'newest';
+    const tagsParam = req.query.tags || ''; 
+    const tags = tagsParam ? tagsParam.split(',') : [];
     
     if (req.query.ids !== undefined) {
         const idsStr = req.query.ids || '';
@@ -125,6 +144,8 @@ app.get('/api/recipes', async (req, res) => {
 
     if (isMongoConnected) {
       const query = {};
+      
+      // Text Search
       if (search) {
         const regex = new RegExp(search, 'i');
         query.$or = [
@@ -133,6 +154,12 @@ app.get('/api/recipes', async (req, res) => {
           { 'parsed_content.ingredients': regex }
         ];
       }
+
+      // Tag Filtering (AND logic: recipe must have ALL selected tags)
+      if (tags.length > 0) {
+          query['parsed_content.tags'] = { $all: tags };
+      }
+
       let sortOption = { createdAt: -1 };
       if (sort === 'popular') sortOption = { rating: -1, ratingCount: -1 };
       if (sort === 'discussed') sortOption = { 'comments.length': -1 }; 
@@ -144,20 +171,32 @@ app.get('/api/recipes', async (req, res) => {
       res.json({ data: recipes, pagination: { total, page, pages: Math.ceil(total / limit) } });
     } else {
       let filtered = memRecipes;
+      
+      // Filter by Tags
+      if (tags.length > 0) {
+          filtered = filtered.filter(r => {
+              const recipeTags = r.parsed_content?.tags || [];
+              return tags.every(t => recipeTags.includes(t));
+          });
+      }
+
+      // Filter by Search Text
       if (search) {
         const lowerSearch = search.toLowerCase();
-        filtered = memRecipes.filter(r => {
+        filtered = filtered.filter(r => {
           const name = r.parsed_content?.dish_name?.toLowerCase() || '';
-          const tags = r.parsed_content?.tags || [];
+          const rTags = r.parsed_content?.tags || [];
           const ings = r.parsed_content?.ingredients || [];
-          return name.includes(lowerSearch) || tags.some(t => t.toLowerCase().includes(lowerSearch)) || ings.some(i => i.toLowerCase().includes(lowerSearch));
+          return name.includes(lowerSearch) || rTags.some(t => t.toLowerCase().includes(lowerSearch)) || ings.some(i => i.toLowerCase().includes(lowerSearch));
         });
       }
+
       if (sort === 'popular') filtered.sort((a, b) => b.rating - a.rating);
       else if (sort === 'newest') filtered = [...filtered].reverse();
 
       const total = filtered.length;
       const start = (page - 1) * limit;
+      const end = start + limit;
       const paginatedData = filtered.slice(start, end);
       res.json({ data: paginatedData, pagination: { total, page, pages: Math.ceil(total / limit) } });
     }
