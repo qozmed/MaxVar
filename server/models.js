@@ -1,5 +1,20 @@
 import mongoose from 'mongoose';
 
+const commentSchema = new mongoose.Schema({
+  id: String,
+  user: String,
+  userAvatar: String,
+  text: String,
+  date: String,
+  likes: { type: Number, default: 0 },
+  dislikes: { type: Number, default: 0 }
+});
+
+// Add replies field recursively (simplified for mongoose: just use the same schema structure)
+commentSchema.add({
+  replies: [commentSchema]
+});
+
 const recipeSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
   author: String,
@@ -16,38 +31,30 @@ const recipeSchema = new mongoose.Schema({
     url: String,
     author: String,
     status: { type: String, enum: ['approved', 'pending', 'rejected'], default: 'pending' },
-    rejectedAt: Date // Field to track when image was rejected for auto-deletion
+    rejectedAt: Date 
   }],
   rating: { type: Number, default: 0 },
   ratingCount: { type: Number, default: 0 },
-  comments: [{
-    id: String,
-    user: String,
-    userAvatar: String, // Added field
-    text: String,
-    date: String,
-    likes: { type: Number, default: 0 },
-    dislikes: { type: Number, default: 0 }
-  }]
+  comments: [commentSchema]
 }, { timestamps: true });
 
 const userSchema = new mongoose.Schema({
-  numericId: { type: String, unique: true }, // Random 6-digit ID
+  numericId: { type: String, unique: true },
   email: { 
     type: String, 
     unique: true, 
     required: true, 
-    lowercase: true, // Автоматически переводит в нижний регистр
-    trim: true       // Убирает пробелы
+    lowercase: true,
+    trim: true
   },
   name: { type: String, required: true },
-  password: { type: String, select: false, required: true }, // Пароль обязателен
+  password: { type: String, select: false, required: true },
   avatar: String,
   joinedDate: String,
   bio: String,
-  role: { type: String, enum: ['user', 'admin'], default: 'user' },
+  role: { type: String, enum: ['user', 'admin', 'moderator'], default: 'user' },
   isBanned: { type: Boolean, default: false },
-  favorites: [String], // List of recipe IDs
+  favorites: [String],
   ratedRecipeIds: [String],
   votedComments: { type: Map, of: String },
   settings: {
@@ -65,10 +72,9 @@ const reportSchema = new mongoose.Schema({
   reason: String,
   details: String,
   status: { type: String, enum: ['open', 'resolved'], default: 'open' },
-  resolvedAt: Date // Field to track when it was resolved for auto-cleanup
+  resolvedAt: Date
 }, { timestamps: true });
 
-// Преобразование _id в id для фронтенда
 reportSchema.set('toJSON', {
   virtuals: true,
   versionKey: false,
@@ -79,7 +85,7 @@ reportSchema.set('toJSON', {
 });
 
 const notificationSchema = new mongoose.Schema({
-  userId: String, // Stores User Name for simplicity in this app structure
+  userId: String,
   type: { type: String, enum: ['info', 'success', 'error', 'warning'], default: 'info' },
   title: String,
   message: String,
@@ -87,7 +93,6 @@ const notificationSchema = new mongoose.Schema({
   link: String
 }, { timestamps: true });
 
-// Преобразование _id в id для уведомлений
 notificationSchema.set('toJSON', {
   virtuals: true,
   versionKey: false,

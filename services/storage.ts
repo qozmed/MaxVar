@@ -3,8 +3,6 @@ import { Recipe, User, RawRecipeImport, Report, Notification } from '../types';
 import { MOCK_RECIPES } from '../mockData';
 
 const generateId = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-
-// Генерация 6-значного числового ID
 const generateNumericId = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 interface RecipeResponse {
@@ -25,14 +23,12 @@ class StorageServiceImpl {
   private isDarkTheme: boolean = false;
   public isOfflineMode: boolean = false;
   
-  // Real-time
   private eventSource: EventSource | null = null;
   private listeners: EventListener[] = [];
 
   async initialize(): Promise<void> {
     try {
       this.loadLocalSettings();
-      // Проверяем доступность сервера
       try {
           const response = await fetch('/api/users', { method: 'HEAD' });
           if (response.ok) {
@@ -51,15 +47,12 @@ class StorageServiceImpl {
       const storedEmail = localStorage.getItem('gourmet_user_email');
       if (storedEmail) {
           const foundUser = this.usersCache.find(u => u.email.toLowerCase() === storedEmail.toLowerCase());
-          
           if (foundUser) {
-              // Если пользователь заблокирован, сбрасываем сессию сразу при инициализации
               if (foundUser.isBanned) {
                   this.saveUser(null);
                   console.warn("User is banned, preventing login.");
               } else {
                   this.currentUserCache = foundUser;
-                  // MIGRATION: Check if user has favorites in local storage but not in DB
                   this.syncFavoritesMigration(foundUser);
               }
           }
@@ -72,11 +65,9 @@ class StorageServiceImpl {
   private async syncFavoritesMigration(user: User) {
       const localFavs = JSON.parse(localStorage.getItem('gourmet_favorites') || '[]');
       if (localFavs.length > 0 && (!user.favorites || user.favorites.length === 0)) {
-          console.log("Migrating local favorites to server profile...");
           user.favorites = localFavs;
           await this.saveUser(user);
           await this.updateUserInDB(user);
-          // Clear local legacy storage
           localStorage.removeItem('gourmet_favorites');
       }
   }
@@ -124,16 +115,11 @@ class StorageServiceImpl {
       } catch(e) { console.warn("Users fetch failed"); }
   }
 
-  /**
-   * Получение рецептов по списку ID (для Избранного)
-   */
   async getRecipesByIds(ids: string[]): Promise<Recipe[]> {
       if (!ids || ids.length === 0) return [];
 
       if (this.isOfflineMode) {
-          // В офлайн режиме ищем в моках и кэше
           const allKnown = [...MOCK_RECIPES, ...this.recipesCache];
-          // Убираем дубликаты по id
           const uniqueKnown = Array.from(new Map(allKnown.map(item => [item.id, item])).values());
           return uniqueKnown.filter(r => ids.includes(r.id));
       }
@@ -153,9 +139,6 @@ class StorageServiceImpl {
       }
   }
 
-  /**
-   * Основной метод получения данных с сервера с поиском и пагинацией
-   */
   async searchRecipes(query: string = '', page: number = 1, limit: number = 12, sort: string = 'newest'): Promise<RecipeResponse> {
       try {
           if (this.isOfflineMode) throw new Error("Offline mode active");
@@ -187,7 +170,6 @@ class StorageServiceImpl {
              }
           }
           
-          // --- LOCAL FALLBACK LOGIC ---
           let filtered = MOCK_RECIPES; 
 
           if (query) {
@@ -242,6 +224,21 @@ class StorageServiceImpl {
     }
   }
 
+  async deleteRecipe(id: string): Promise<boolean> {
+      if (this.isOfflineMode) return false;
+      try {
+          const response = await fetch(`/api/recipes/${id}`, { method: 'DELETE' });
+          if (response.ok) {
+              this.recipesCache = this.recipesCache.filter(r => r.id !== id);
+              return true;
+          }
+          return false;
+      } catch (e) {
+          console.error("Delete error", e);
+          return false;
+      }
+  }
+
   async importRecipes(rawRecipes: RawRecipeImport[]): Promise<{ success: boolean; count: number; message: string }> {
     try {
          const validRawRecipes = rawRecipes.filter(raw => raw && raw.parsed_content);
@@ -287,19 +284,15 @@ class StorageServiceImpl {
 
   async registerUser(newUser: User): Promise<{ success: boolean; message: string; user?: User }> {
       if (this.isOfflineMode) return { success: false, message: 'Сервер недоступен (Offline Mode)' };
-      
-      // Generate Numeric ID if missing
       if (!newUser.numericId) {
           newUser.numericId = generateNumericId();
       }
-      
       try {
           const response = await fetch('/api/users', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(newUser)
           });
-
           const contentType = response.headers.get("content-type");
           let data;
           if (contentType && contentType.includes("application/json")) {
@@ -307,9 +300,7 @@ class StorageServiceImpl {
           } else {
              throw new Error("Invalid JSON response");
           }
-          
           if (!response.ok) return { success: false, message: data.message || 'Ошибка сервера' };
-
           this.usersCache.push(data);
           return { success: true, message: 'Успешно!', user: data };
       } catch (e) {
@@ -325,21 +316,16 @@ class StorageServiceImpl {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email, password })
           });
-
           const contentType = response.headers.get("content-type");
           if (!contentType || !contentType.includes("application/json")) {
              return { success: false, message: "Ошибка сервера (500/502)" };
           }
-
           const data = await response.json();
           if (!response.ok) return { success: false, message: data.message || 'Ошибка входа' };
-
-          // Backfill numericId if missing in legacy data
           if (!data.numericId) {
               data.numericId = generateNumericId();
               await this.updateUserInDB(data);
           }
-
           return { success: true, user: data, message: 'Вход выполнен' };
       } catch (e) {
           return { success: false, message: 'Сервер недоступен' };
@@ -349,12 +335,9 @@ class StorageServiceImpl {
   async updateUserInDB(updatedUser: User): Promise<void> {
       const index = this.usersCache.findIndex(u => u.email === updatedUser.email);
       if (index !== -1) this.usersCache[index] = updatedUser;
-
-      // Also update local session cache if it matches
       if (this.currentUserCache && this.currentUserCache.email === updatedUser.email) {
           this.currentUserCache = updatedUser;
       }
-
       if (!this.isOfflineMode) {
         try {
             await fetch(`/api/users/${updatedUser.email}`, {
@@ -366,11 +349,8 @@ class StorageServiceImpl {
       }
   }
 
-  // --- REPORTS ---
   async sendReport(report: Omit<Report, 'id' | 'createdAt' | 'status'>): Promise<void> {
-      if (this.isOfflineMode) {
-          throw new Error("В офлайн режиме нельзя отправлять жалобы.");
-      }
+      if (this.isOfflineMode) throw new Error("В офлайн режиме нельзя отправлять жалобы.");
       try {
           await fetch('/api/reports', {
               method: 'POST',
@@ -407,7 +387,6 @@ class StorageServiceImpl {
       }
   }
 
-  // --- NOTIFICATIONS ---
   async getNotifications(userId: string): Promise<Notification[]> {
       if (this.isOfflineMode) return [];
       try {
@@ -457,12 +436,10 @@ class StorageServiceImpl {
   getFavorites(): string[] { return this.currentUserCache?.favorites || []; }
   
   async saveFavorites(favorites: string[]): Promise<void> {
-      // Update cache immediately
       if (this.currentUserCache) {
           this.currentUserCache = { ...this.currentUserCache, favorites };
           await this.updateUserInDB(this.currentUserCache);
       } else {
-          // Fallback if no user logged in (shouldn't happen in this flow)
           localStorage.setItem('gourmet_favorites', JSON.stringify(favorites));
       }
   }

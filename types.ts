@@ -10,11 +10,12 @@ export interface RecipeParsedContent {
 export interface Comment {
   id: string;
   user: string;
-  userAvatar?: string; // Added avatar URL to comment
-  text: string; // Content is sanitized
+  userAvatar?: string;
+  text: string;
   date: string;
   likes: number;
   dislikes: number;
+  replies?: Comment[]; // Nested replies
 }
 
 export interface RecipeImage {
@@ -29,13 +30,12 @@ export interface Recipe {
   author: string;
   content: string;
   parsed_content: RecipeParsedContent;
-  images: RecipeImage[]; // Changed from string[] to object for moderation
+  images: RecipeImage[];
   rating: number;
   ratingCount: number;
   comments: Comment[];
 }
 
-// Interface for the raw JSON file structure provided by the user
 export interface RawRecipeImport {
   author: string;
   content: string;
@@ -44,25 +44,25 @@ export interface RawRecipeImport {
 
 export interface UserSettings {
   showEmail: boolean;
-  showFavorites: boolean; // New setting
+  showFavorites: boolean;
   newsletter: boolean;
-  dietaryPreferences: string[]; // e.g., 'vegetarian', 'vegan', 'keto', 'gluten_free'
+  dietaryPreferences: string[];
 }
 
 export interface User {
-  numericId: string; // Unique 6-digit ID
+  numericId: string;
   name: string;
   email: string;
-  password?: string; // Optional password field
+  password?: string;
   avatar?: string;
   joinedDate: string;
   bio?: string;
-  favorites: string[]; // Moved to user object to share publicly
+  favorites: string[];
   ratedRecipeIds: string[];
   votedComments: Record<string, 'like' | 'dislike'>;
-  role: 'user' | 'admin';
+  role: 'user' | 'admin' | 'moderator'; // Added moderator
   isBanned: boolean;
-  settings?: UserSettings; // Optional for backward compatibility
+  settings?: UserSettings;
 }
 
 export interface Report {
@@ -70,27 +70,27 @@ export interface Report {
   recipeId: string;
   recipeName: string;
   reporter: string;
-  reason: string; // "Некорректное фото", "Ошибка в рецепте", etc.
-  details?: string; // Description for "Other"
+  reason: string;
+  details?: string;
   status: 'open' | 'resolved';
   createdAt: string;
 }
 
 export interface Notification {
   id: string;
-  userId: string; // User name or email (depending on how you identify users, we use name/email mix but let's use name here to match comments/images author)
+  userId: string;
   type: 'info' | 'success' | 'error' | 'warning';
   title: string;
   message: string;
   isRead: boolean;
   createdAt: string;
-  link?: string; // Optional link to navigate (e.g., to recipe)
+  link?: string;
 }
 
 export enum AppView {
   HOME = 'HOME',
   RECIPE_DETAIL = 'RECIPE_DETAIL',
   PROFILE = 'PROFILE',
-  PUBLIC_PROFILE = 'PUBLIC_PROFILE', // New view for viewing other users
+  PUBLIC_PROFILE = 'PUBLIC_PROFILE',
   ADMIN = 'ADMIN',
 }
