@@ -1,0 +1,649 @@
+import express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { RecipeModel, UserModel, ReportModel, NotificationModel } from './models.js';
+
+dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/gourmet_db';
+
+// --- STATE ---
+let isMongoConnected = false;
+
+// In-Memory Fallback Storage (для работы без MongoDB)
+let memUsers = [];
+let memRecipes = [];
+let memReports = [];
+let memNotifications = [];
+
+// --- SSE CLIENTS ---
+let clients = [];
+
+// --- DB CONNECTION ---
+const connectDB = async () => {
+  try {
+    // Ставим короткий таймаут (5 сек), чтобы не ждать вечно
+    await mongoose.connect(MONGO_URI, { 
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    isMongoConnected = true;
+    console.log('✅ MongoDB Connected successfully');
+  } catch (err) {
+    console.log('⚠️  MongoDB unreachable.');
+    console.log('🚀 Server switching to IN-MEMORY MODE (Data will be lost on restart)');
+    console.log('   To use DB, make sure MongoDB is running on port 27017');
+    isMongoConnected = false;
+  }
+};
+
+// Отключаем буферизацию команд, если базы нет, чтобы ошибки вылетали сразу
+mongoose.set('bufferCommands', false);
+
+connectDB();
+
+// Слушаем события подключения/отключения в реальном времени
+mongoose.connection.on('connected', () => { isMongoConnected = true; console.log('✅ DB Connection restored'); });
+mongoose.connection.on('disconnected', () => { isMongoConnected = false; console.log('⚠️ DB Disconnected'); });
+
+// --- CLEANUP TASK (Run every hour) ---
+// Deletes reports resolved more than 48 hours ago
+// Deletes rejected images more than 12 hours ago
+const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+setInterval(async () => {
+    const reportCutoffDate = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48 hours ago
+    const imageCutoffDate = new Date(Date.now() - 12 * 60 * 60 * 1000); // 12 hours ago
+    
+    console.log(`[System] Running cleanup task...`);
+
+    if (isMongoConnected) {
+        try {
+            // 1. Clean up old resolved reports
+            const reportResult = await ReportModel.deleteMany({ 
+                status: 'resolved', 
+                resolvedAt: { $lt: reportCutoffDate } 
+            });
+            if (reportResult.deletedCount > 0) {
+                console.log(`[System] Deleted ${reportResult.deletedCount} old resolved reports.`);
+            }
+
+            // 2. Clean up rejected images
+            // $pull removes items from an array that match the condition
+            const imageResult = await RecipeModel.updateMany(
+                { "images.status": "rejected", "images.rejectedAt": { $lt: imageCutoffDate } },
+                { $pull: { images: { status: "rejected", rejectedAt: { $lt: imageCutoffDate } } } }
+            );
+            if (imageResult.modifiedCount > 0) {
+                 console.log(`[System] Removed old rejected images from ${imageResult.modifiedCount} recipes.`);
+            }
+
+        } catch (e) {
+            console.error("[System] Cleanup failed:", e);
+        }
+    } else {
+        // 1. In-Memory Report Cleanup
+        const initialReportLen = memReports.length;
+        memReports = memReports.filter(r => {
+            // Keep open reports OR resolved reports that are fresh (< 48h)
+            if (r.status !== 'resolved') return true;
+            return r.resolvedAt && new Date(r.resolvedAt) >= reportCutoffDate;
+        });
+        const deletedReports = initialReportLen - memReports.length;
+        if (deletedReports > 0) console.log(`[Memory] Deleted ${deletedReports} old reports.`);
+
+        // 2. In-Memory Image Cleanup
+        let updatedRecipesCount = 0;
+        memRecipes.forEach(recipe => {
+            if (recipe.images) {
+                const originalLen = recipe.images.length;
+                recipe.images = recipe.images.filter(img => {
+                    // Keep if NOT rejected OR if rejected recently
+                    if (img.status !== 'rejected') return true;
+                    return img.rejectedAt && new Date(img.rejectedAt) >= imageCutoffDate;
+                });
+                if (recipe.images.length !== originalLen) updatedRecipesCount++;
+            }
+        });
+        if (updatedRecipesCount > 0) console.log(`[Memory] Cleaned images from ${updatedRecipesCount} recipes.`);
+    }
+}, CLEANUP_INTERVAL);
+
+
+// --- REAL-TIME NOTIFICATION FUNCTION ---
+const notifyClients = (type, payload) => {
+  clients.forEach(client => {
+    client.res.write(`data: ${JSON.stringify({ type, payload })}\n\n`);
+  });
+};
+
+// --- ROUTES ---
+
+// --- SSE ENDPOINT ---
+app.get('/api/events', (req, res) => {
+  const headers = {
+    'Content-Type': 'text/event-stream',
+    'Connection': 'keep-alive',
+    'Cache-Control': 'no-cache'
+  };
+  res.writeHead(200, headers);
+
+  const clientId = Date.now();
+  const newClient = {
+    id: clientId,
+    res
+  };
+
+  clients.push(newClient);
+
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ type: 'CONNECTED', payload: { clientId } })}\n\n`);
+
+  req.on('close', () => {
+    clients = clients.filter(client => client.id !== clientId);
+  });
+});
+
+// --- RECIPES (SEARCH & PAGINATION) ---
+app.get('/api/recipes', async (req, res) => {
+  try {
+    // Получаем параметры из URL
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
+    const search = req.query.search || '';
+    const sort = req.query.sort || 'newest'; // newest, popular, discussed, updated
+    
+    // Если параметр ids присутствует в запросе (даже пустой), мы должны искать по ID
+    // и возвращать ТОЛЬКО совпадения (или пустой список), а не падать в общий поиск.
+    if (req.query.ids !== undefined) {
+        const idsStr = req.query.ids || '';
+        const ids = idsStr.split(',').filter(id => id.trim().length > 0);
+
+        if (isMongoConnected) {
+            const recipes = await RecipeModel.find({ id: { $in: ids } });
+            return res.json({
+                data: recipes,
+                pagination: { total: recipes.length, page: 1, pages: 1 }
+            });
+        } else {
+            const recipes = memRecipes.filter(r => ids.includes(r.id));
+            return res.json({
+                data: recipes,
+                pagination: { total: recipes.length, page: 1, pages: 1 }
+            });
+        }
+    }
+
+    // --- ОБЩИЙ ПОИСК (только если ids не переданы) ---
+
+    if (isMongoConnected) {
+      // --- MongoDB Logic ---
+      const query = {};
+      if (search) {
+        const regex = new RegExp(search, 'i');
+        query.$or = [
+          { 'parsed_content.dish_name': regex },
+          { 'parsed_content.tags': regex },
+          { 'parsed_content.ingredients': regex }
+        ];
+      }
+
+      let sortOption = { createdAt: -1 };
+      if (sort === 'popular') sortOption = { rating: -1, ratingCount: -1 };
+      if (sort === 'discussed') sortOption = { 'comments.length': -1 }; 
+      if (sort === 'updated') sortOption = { updatedAt: -1 };
+
+      const total = await RecipeModel.countDocuments(query);
+      const recipes = await RecipeModel.find(query)
+        .sort(sortOption)
+        .skip((page - 1) * limit)
+        .limit(limit);
+
+      res.json({
+        data: recipes,
+        pagination: {
+          total,
+          page,
+          pages: Math.ceil(total / limit)
+        }
+      });
+
+    } else {
+      // --- In-Memory Logic ---
+      let filtered = memRecipes;
+
+      if (search) {
+        const lowerSearch = search.toLowerCase();
+        filtered = memRecipes.filter(r => {
+          const name = r.parsed_content?.dish_name?.toLowerCase() || '';
+          const tags = r.parsed_content?.tags || [];
+          const ings = r.parsed_content?.ingredients || [];
+          
+          return name.includes(lowerSearch) || 
+                 tags.some(t => t.toLowerCase().includes(lowerSearch)) ||
+                 ings.some(i => i.toLowerCase().includes(lowerSearch));
+        });
+      }
+
+      if (sort === 'popular') {
+        filtered.sort((a, b) => b.rating - a.rating);
+      } else if (sort === 'newest') {
+          // Assuming memRecipes are pushed in order, reverse for newest
+          filtered = [...filtered].reverse();
+      }
+
+      const total = filtered.length;
+      const start = (page - 1) * limit;
+      const end = start + limit;
+      const paginatedData = filtered.slice(start, end);
+
+      res.json({
+        data: paginatedData,
+        pagination: {
+          total,
+          page,
+          pages: Math.ceil(total / limit)
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Get Recipes Error:", e.message);
+    res.status(500).json({ error: "Server Error", data: [], pagination: { total: 0, page: 1, pages: 0 } });
+  }
+});
+
+app.post('/api/recipes', async (req, res) => {
+  try {
+    const recipeData = req.body;
+    let savedRecipe;
+
+    if (isMongoConnected) {
+      savedRecipe = await RecipeModel.findOneAndUpdate(
+        { id: recipeData.id },
+        recipeData,
+        { upsert: true, new: true }
+      );
+    } else {
+      const idx = memRecipes.findIndex(r => r.id === recipeData.id);
+      if (idx > -1) {
+        memRecipes[idx] = recipeData;
+      } else {
+        memRecipes.push(recipeData);
+      }
+      savedRecipe = recipeData;
+      console.log(`[Memory] Saved recipe: ${recipeData.parsed_content?.dish_name}`);
+    }
+
+    // Notify all clients about the update
+    notifyClients('RECIPE_UPDATED', savedRecipe);
+    res.json(savedRecipe);
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/recipes/import', async (req, res) => {
+  try {
+    const recipes = req.body;
+    if (!Array.isArray(recipes)) return res.status(400).send("Not an array");
+    
+    console.log(`Starting import of ${recipes.length} recipes...`);
+
+    if (isMongoConnected) {
+      // Используем bulkWrite для быстрой вставки тысяч записей
+      const BATCH_SIZE = 500;
+      let processed = 0;
+
+      for (let i = 0; i < recipes.length; i += BATCH_SIZE) {
+          const batch = recipes.slice(i, i + BATCH_SIZE);
+          const operations = batch.map(recipe => ({
+            updateOne: {
+              filter: { id: recipe.id },
+              update: { $set: recipe },
+              upsert: true
+            }
+          }));
+          await RecipeModel.bulkWrite(operations);
+          processed += batch.length;
+          console.log(`Imported ${processed} / ${recipes.length}`);
+      }
+      
+      res.json({ success: true, count: recipes.length });
+    } else {
+      // Merge with existing memory recipes to avoid duplicates by ID
+      let addedCount = 0;
+      recipes.forEach(newR => {
+        const idx = memRecipes.findIndex(r => r.id === newR.id);
+        if (idx > -1) {
+          memRecipes[idx] = newR;
+        } else {
+          memRecipes.push(newR);
+          addedCount++;
+        }
+      });
+      console.log(`[Memory] Imported ${addedCount} recipes`);
+      res.json({ success: true, count: recipes.length });
+    }
+
+    notifyClients('RECIPES_IMPORTED', { count: recipes.length });
+
+  } catch (e) {
+    console.error("Import Error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- USERS ---
+app.get('/api/users', async (req, res) => {
+  try {
+    if (isMongoConnected) {
+      const users = await UserModel.find();
+      res.json(users);
+    } else {
+      res.json(memUsers.map(u => {
+        const { password, ...safe } = u;
+        return safe;
+      }));
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// LOGIN
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email и пароль обязательны" });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+
+    let user;
+    if (isMongoConnected) {
+        user = await UserModel.findOne({ email: normalizedEmail }).select('+password');
+    } else {
+        user = memUsers.find(u => u.email === normalizedEmail);
+    }
+    
+    if (!user) return res.status(404).json({ message: "Пользователь не найден" });
+    
+    const storedPassword = isMongoConnected ? user.password : user.password;
+    
+    if (storedPassword !== password) {
+        return res.status(401).json({ message: "Неверный пароль" });
+    }
+    
+    if (user.isBanned) return res.status(403).json({ message: "Аккаунт заблокирован" });
+
+    const userObj = isMongoConnected ? user.toObject() : { ...user };
+    delete userObj.password; 
+    
+    res.json(userObj);
+  } catch (e) {
+    console.error("Login error:", e.message);
+    res.status(500).json({ error: "Ошибка сервера при входе" });
+  }
+});
+
+// REGISTER
+app.post('/api/users', async (req, res) => {
+  try {
+    const userData = req.body;
+    
+    if (!userData.email || !userData.password || !userData.name) {
+         return res.status(400).json({ message: "Заполните все поля" });
+    }
+
+    const normalizedEmail = userData.email.toLowerCase();
+    let safeUser;
+
+    if (isMongoConnected) {
+        const existing = await UserModel.findOne({ email: normalizedEmail });
+        if (existing) return res.status(400).json({ message: "Такой Email уже зарегистрирован" });
+        
+        const newUser = new UserModel({ ...userData, email: normalizedEmail });
+        await newUser.save();
+        
+        const userObj = newUser.toObject();
+        delete userObj.password;
+        safeUser = userObj;
+    } else {
+        const existing = memUsers.find(u => u.email === normalizedEmail);
+        if (existing) return res.status(400).json({ message: "Email занят (In-Memory)" });
+
+        const newUser = { ...userData, email: normalizedEmail };
+        memUsers.push(newUser);
+        
+        const { password, ...rest } = newUser;
+        safeUser = rest;
+        console.log(`[Memory] Registered user: ${safeUser.name}`);
+    }
+
+    res.json(safeUser);
+    notifyClients('USER_UPDATED', safeUser);
+
+  } catch (e) {
+    console.error("Register error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/users/:email', async (req, res) => {
+  try {
+    const email = req.params.email.toLowerCase();
+    let updatedUser;
+
+    if (isMongoConnected) {
+        updatedUser = await UserModel.findOneAndUpdate(
+          { email },
+          req.body,
+          { new: true }
+        );
+    } else {
+        const idx = memUsers.findIndex(u => u.email === email);
+        if (idx > -1) {
+            const oldPwd = memUsers[idx].password;
+            memUsers[idx] = { ...memUsers[idx], ...req.body, password: oldPwd };
+            const { password, ...safe } = memUsers[idx];
+            updatedUser = safe;
+        } else {
+            return res.status(404).json({ message: "User not found" });
+        }
+    }
+    
+    res.json(updatedUser);
+    notifyClients('USER_UPDATED', updatedUser);
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- REPORTS ---
+app.get('/api/reports', async (req, res) => {
+    try {
+        if (isMongoConnected) {
+            // Because of toJSON transformation in schema, _id will become id
+            const reports = await ReportModel.find().sort({ createdAt: -1 });
+            res.json(reports);
+        } else {
+            res.json(memReports);
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/reports', async (req, res) => {
+    try {
+        const reportData = req.body;
+        let newReport;
+        if (isMongoConnected) {
+            const report = new ReportModel(reportData);
+            await report.save();
+            // Convert to object to trigger toJSON transformation for response
+            newReport = report.toJSON();
+        } else {
+            // Generate a more robust unique ID for in-memory
+            const uniqueId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+            newReport = { ...reportData, id: uniqueId, createdAt: new Date().toISOString() };
+            memReports.unshift(newReport);
+        }
+        res.json(newReport);
+        notifyClients('REPORT_CREATED', newReport);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/reports/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        
+        const updateData = { status };
+        if (status === 'resolved') {
+            updateData.resolvedAt = new Date().toISOString();
+        }
+
+        let updated;
+
+        if (isMongoConnected) {
+            // id here corresponds to _id in Mongo
+            updated = await ReportModel.findByIdAndUpdate(id, updateData, { new: true });
+        } else {
+            const idx = memReports.findIndex(r => r.id === id);
+            if (idx > -1) {
+                memReports[idx] = { ...memReports[idx], ...updateData };
+                updated = memReports[idx];
+            }
+        }
+        
+        if (!updated) {
+            return res.status(404).json({ error: "Report not found" });
+        }
+
+        res.json(updated);
+        notifyClients('REPORT_UPDATED', updated);
+    } catch (e) {
+        console.error("Report Update Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- NOTIFICATIONS ---
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const { userId } = req.query; // Using userName as ID
+    if (!userId) return res.json([]);
+
+    if (isMongoConnected) {
+        const notifs = await NotificationModel.find({ userId }).sort({ createdAt: -1 });
+        res.json(notifs);
+    } else {
+        const notifs = memNotifications.filter(n => n.userId === userId).reverse();
+        res.json(notifs);
+    }
+  } catch (e) {
+      res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/notifications', async (req, res) => {
+  try {
+      const notifData = req.body;
+      let savedNotif;
+
+      if (isMongoConnected) {
+          const notif = new NotificationModel(notifData);
+          await notif.save();
+          savedNotif = notif.toJSON();
+      } else {
+          const uniqueId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+          savedNotif = { ...notifData, id: uniqueId, createdAt: new Date().toISOString() };
+          memNotifications.push(savedNotif);
+      }
+      
+      notifyClients('NOTIFICATION_ADDED', savedNotif);
+      res.json(savedNotif);
+  } catch (e) {
+      res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+      const { id } = req.params;
+      if (isMongoConnected) {
+          await NotificationModel.findByIdAndUpdate(id, { isRead: true });
+      } else {
+          const idx = memNotifications.findIndex(n => n.id === id);
+          if (idx > -1) memNotifications[idx].isRead = true;
+      }
+      res.json({ success: true });
+  } catch (e) {
+      res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/notifications/:userId/read-all', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        if (isMongoConnected) {
+            await NotificationModel.updateMany({ userId, isRead: false }, { isRead: true });
+        } else {
+            memNotifications.forEach(n => {
+                if (n.userId === userId) n.isRead = true;
+            });
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/notifications/:userId/read', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        if (isMongoConnected) {
+            await NotificationModel.deleteMany({ userId, isRead: true });
+        } else {
+            memNotifications = memNotifications.filter(n => !(n.userId === userId && n.isRead));
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- SERVE STATIC ASSETS IN PRODUCTION ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// This ensures that when deployed, the backend serves the frontend files
+if (process.env.NODE_ENV === 'production') {
+  // Point to the 'dist' folder built by Vite (one level up from server/)
+  app.use(express.static(path.join(__dirname, '../dist')));
+
+  // For any other request, send the index.html (SPA routing)
+  app.get('*', (req, res) => {
+    res.sendFile(path.resolve(__dirname, '../dist', 'index.html'));
+  });
+} else {
+    // Basic root handler for dev mode if frontend runs separately
+    app.get('/', (req, res) => {
+        res.send(`Gourmet API Running. Mode: ${isMongoConnected ? 'MongoDB' : 'In-Memory (Session Only)'}`);
+    });
+}
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
