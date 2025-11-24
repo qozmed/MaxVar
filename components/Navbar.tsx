@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag, Trash2, ArrowLeft } from 'lucide-react';
+import { Search, X, User as UserIcon, Moon, Sun, LogOut, ShieldAlert, UtensilsCrossed, Star, Loader2, ChevronRight, Settings, Headphones, Filter, Tag, Trash2, ArrowLeft, Clock, Activity } from 'lucide-react';
 import { User, Recipe } from '../types';
 import { StorageService } from '../services/storage';
 import NotificationCenter from './NotificationCenter';
 
 interface NavbarProps {
-  onSearch: (query: string, tags?: string[]) => void;
+  onSearch: (query: string, tags?: string[], complexity?: string[], timeRange?: [number, number]) => void;
   currentUser: User | null;
   onAuthClick: () => void;
   onLogout: () => void;
@@ -19,6 +19,9 @@ interface NavbarProps {
   selectedTags?: string[];
   onNavigate?: (link: string) => void;
 }
+
+const COMPLEXITY_OPTIONS = ['Легко', 'Средне', 'Сложно'];
+const MAX_TIME_MINUTES = 180; // 3 hours slider max
 
 const Navbar: React.FC<NavbarProps> = ({ 
   onSearch, 
@@ -47,6 +50,10 @@ const Navbar: React.FC<NavbarProps> = ({
   // Filter Dropdown State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState('');
+  
+  // New Filters State
+  const [selectedComplexity, setSelectedComplexity] = useState<string[]>([]);
+  const [timeRange, setTimeRange] = useState<[number, number]>([0, MAX_TIME_MINUTES]);
 
   const searchRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -58,7 +65,7 @@ const Navbar: React.FC<NavbarProps> = ({
       if (searchQuery.length > 1) {
         setIsSearching(true);
         try {
-            const result = await StorageService.searchRecipes(searchQuery, 1, 5, 'newest', selectedTags);
+            const result = await StorageService.searchRecipes(searchQuery, 1, 5, 'newest', selectedTags, selectedComplexity, timeRange);
             setSuggestions(result.data);
             setShowSuggestions(true);
         } catch (e) { console.error(e); } finally { setIsSearching(false); }
@@ -68,7 +75,7 @@ const Navbar: React.FC<NavbarProps> = ({
       }
     }, 400);
     return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery, selectedTags]);
+  }, [searchQuery, selectedTags, selectedComplexity, timeRange]);
 
   useEffect(() => { if (isMobileSearchOpen && mobileSearchInputRef.current) mobileSearchInputRef.current.focus(); }, [isMobileSearchOpen]);
   
@@ -85,12 +92,16 @@ const Navbar: React.FC<NavbarProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const triggerSearch = (tags: string[], complexity: string[], time: [number, number]) => {
+      onSearch(searchQuery, tags, complexity, time);
+  };
+
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setShowSuggestions(false);
     setIsMobileSearchOpen(false);
     setIsFilterOpen(false);
-    onSearch(searchQuery, selectedTags);
+    triggerSearch(selectedTags, selectedComplexity, timeRange);
   };
 
   const handleClearSearch = () => {
@@ -104,29 +115,57 @@ const Navbar: React.FC<NavbarProps> = ({
     setSearchQuery('');
     setShowSuggestions(false);
     setIsMobileSearchOpen(false);
-    if (onRecipeSelect) onRecipeSelect(recipe); else onSearch(recipe.parsed_content.dish_name, selectedTags);
+    if (onRecipeSelect) onRecipeSelect(recipe); else triggerSearch(selectedTags, selectedComplexity, timeRange);
   };
 
-  // Auto-apply tags immediately
+  // --- Filter Logic ---
+
   const toggleTag = (tag: string) => {
       const newTags = selectedTags.includes(tag) 
           ? selectedTags.filter(t => t !== tag) 
           : [...selectedTags, tag];
-      // Trigger search immediately
-      onSearch(searchQuery, newTags);
+      triggerSearch(newTags, selectedComplexity, timeRange);
   };
 
-  const clearAllTags = () => {
+  const toggleComplexity = (level: string) => {
+      const newComplexity = selectedComplexity.includes(level)
+        ? selectedComplexity.filter(c => c !== level)
+        : [...selectedComplexity, level];
+      setSelectedComplexity(newComplexity);
+      triggerSearch(selectedTags, newComplexity, timeRange);
+  };
+
+  const handleTimeChange = (index: 0 | 1, value: number) => {
+      const newRange = [...timeRange] as [number, number];
+      newRange[index] = value;
+      // Ensure min <= max
+      if (index === 0 && newRange[0] > newRange[1]) newRange[0] = newRange[1];
+      if (index === 1 && newRange[1] < newRange[0]) newRange[1] = newRange[0];
+      setTimeRange(newRange);
+  };
+
+  const handleTimeCommit = () => {
+      triggerSearch(selectedTags, selectedComplexity, timeRange);
+  };
+
+  const clearAllFilters = () => {
       setTagSearchQuery('');
-      onSearch(searchQuery, []);
+      setSelectedComplexity([]);
+      setTimeRange([0, MAX_TIME_MINUTES]);
+      triggerSearch([], [], [0, MAX_TIME_MINUTES]);
   };
 
   const isModOrAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator');
+  const filteredAvailableTags = availableTags.filter(tag => tag.toLowerCase().includes(tagSearchQuery.toLowerCase()));
+  const activeFiltersCount = selectedTags.length + selectedComplexity.length + (timeRange[0] > 0 || timeRange[1] < MAX_TIME_MINUTES ? 1 : 0);
 
-  // Filter available tags based on search
-  const filteredAvailableTags = availableTags.filter(tag => 
-      tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
-  );
+  const formatTime = (mins: number) => {
+      if (mins === MAX_TIME_MINUTES) return '3ч+';
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      if (h > 0) return `${h}ч ${m > 0 ? m + 'м' : ''}`;
+      return `${m} мин`;
+  };
 
   return (
     <>
@@ -148,70 +187,69 @@ const Navbar: React.FC<NavbarProps> = ({
                 <button 
                     type="button"
                     onClick={() => setIsFilterOpen(!isFilterOpen)}
-                    className={`p-2 rounded-xl border transition-all flex items-center gap-2 ${selectedTags.length > 0 ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white/50 dark:bg-black/50 border-gray-200 dark:border-gray-700 hover:bg-gray-100'}`}
-                    title="Фильтр по тегам"
+                    className={`p-2 rounded-xl border transition-all flex items-center gap-2 ${activeFiltersCount > 0 ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'bg-white/50 dark:bg-black/50 border-gray-200 dark:border-gray-700 hover:bg-gray-100'}`}
+                    title="Фильтры"
                 >
                     <Filter className="w-5 h-5" />
-                    {selectedTags.length > 0 && <span className="text-xs font-bold bg-white/50 px-1.5 rounded-full">{selectedTags.length}</span>}
+                    {activeFiltersCount > 0 && <span className="text-xs font-bold bg-white/50 px-1.5 rounded-full">{activeFiltersCount}</span>}
                 </button>
                 
                 {isFilterOpen && (
-                    <div className="absolute top-full left-0 mt-2 w-80 max-h-[600px] flex flex-col bg-white dark:bg-gray-900 shadow-2xl border border-gray-200 dark:border-gray-700 rounded-xl animate-fade-in z-50">
-                        {/* Header */}
-                        <div className="flex items-center justify-between p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 rounded-t-xl">
-                            <h4 className="text-sm font-bold uppercase text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                                <Tag className="w-4 h-4" /> Теги {selectedTags.length > 0 && `(${selectedTags.length})`}
-                            </h4>
-                            {selectedTags.length > 0 && (
-                                <button onClick={clearAllTags} className="text-xs font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded-md transition-colors" title="Сбросить все">
-                                    Сбросить
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Search Input */}
-                        <div className="p-3 bg-white dark:bg-gray-900">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
-                                <input 
-                                    type="text" 
-                                    className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border border-transparent focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none dark:text-white transition-all" 
-                                    placeholder="Найти категорию..."
-                                    value={tagSearchQuery}
-                                    onChange={(e) => setTagSearchQuery(e.target.value)}
-                                    autoFocus
-                                />
-                                {tagSearchQuery && (
-                                    <button onClick={() => setTagSearchQuery('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
-                                        <X className="w-4 h-4" />
-                                    </button>
-                                )}
+                    <div className="absolute top-full left-0 mt-2 w-96 max-h-[700px] flex flex-col bg-white dark:bg-gray-900 shadow-2xl border border-gray-200 dark:border-gray-700 rounded-xl animate-fade-in z-50 overflow-hidden">
+                         <div className="flex flex-col h-full max-h-[70vh] overflow-y-auto custom-scrollbar">
+                            {/* Complexity Section */}
+                            <div className="p-4 border-b border-gray-100 dark:border-gray-800">
+                                <h4 className="text-xs font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><Activity className="w-3.5 h-3.5" /> Сложность</h4>
+                                <div className="flex flex-wrap gap-2">
+                                    {COMPLEXITY_OPTIONS.map(level => (
+                                        <button
+                                            key={level}
+                                            onClick={() => toggleComplexity(level)}
+                                            className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${selectedComplexity.includes(level) ? 'bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-gray-50 border-gray-200 text-gray-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300'}`}
+                                        >
+                                            {level}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Tags List */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-0 max-h-[300px]">
-                            <div className="flex flex-wrap gap-2">
-                                {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
-                                    <button
-                                        key={tag}
-                                        onClick={() => toggleTag(tag)}
-                                        className={`text-xs px-3 py-1.5 rounded-lg border transition-all active:scale-95 ${
-                                            selectedTags.includes(tag) 
-                                            ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20' 
-                                            : 'bg-gray-50 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-500 hover:bg-white dark:hover:bg-gray-800'
-                                        }`}
-                                    >
-                                        {tag}
-                                    </button>
-                                )) : (
-                                    <div className="w-full py-8 text-center flex flex-col items-center text-gray-400">
-                                        <Search className="w-8 h-8 mb-2 opacity-20" />
-                                        <p className="text-sm">Ничего не найдено</p>
+                            {/* Time Section */}
+                            <div className="p-4 border-b border-gray-100 dark:border-gray-800">
+                                <h4 className="text-xs font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><Clock className="w-3.5 h-3.5" /> Время готовки</h4>
+                                <div className="px-2">
+                                    <div className="flex justify-between text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">
+                                        <span>{formatTime(timeRange[0])}</span>
+                                        <span>{formatTime(timeRange[1])}</span>
                                     </div>
-                                )}
+                                    <div className="relative h-10">
+                                        {/* Multi-range slider implementation */}
+                                        <input type="range" min="0" max={MAX_TIME_MINUTES} step="5" value={timeRange[0]} onChange={(e) => handleTimeChange(0, parseInt(e.target.value))} onMouseUp={handleTimeCommit} onKeyUp={handleTimeCommit} className="absolute w-full pointer-events-none appearance-none bg-transparent z-20 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-600 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:cursor-pointer" style={{ height: '4px' }} />
+                                        <input type="range" min="0" max={MAX_TIME_MINUTES} step="5" value={timeRange[1]} onChange={(e) => handleTimeChange(1, parseInt(e.target.value))} onMouseUp={handleTimeCommit} onKeyUp={handleTimeCommit} className="absolute w-full pointer-events-none appearance-none bg-transparent z-20 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-600 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:cursor-pointer" style={{ height: '4px' }} />
+                                        <div className="absolute top-1.5 left-0 right-0 h-1 bg-gray-200 dark:bg-gray-700 rounded z-10"></div>
+                                        <div className="absolute top-1.5 h-1 bg-emerald-500 rounded z-10" style={{ left: `${(timeRange[0] / MAX_TIME_MINUTES) * 100}%`, right: `${100 - (timeRange[1] / MAX_TIME_MINUTES) * 100}%` }}></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Tags Section */}
+                            <div className="p-4">
+                                <h4 className="text-xs font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><Tag className="w-3.5 h-3.5" /> Теги</h4>
+                                <div className="mb-3 relative">
+                                    <input type="text" className="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-800 border-transparent focus:bg-white focus:border-emerald-500 outline-none" placeholder="Найти тег..." value={tagSearchQuery} onChange={(e) => setTagSearchQuery(e.target.value)} />
+                                    <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
+                                        <button key={tag} onClick={() => toggleTag(tag)} className={`text-xs px-2.5 py-1 rounded-md border transition-all ${selectedTags.includes(tag) ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300'}`}>{tag}</button>
+                                    )) : <span className="text-xs text-gray-400">Нет тегов</span>}
+                                </div>
                             </div>
                         </div>
+                        {activeFiltersCount > 0 && (
+                            <div className="p-3 bg-gray-50 dark:bg-gray-800 border-t border-gray-100 dark:border-gray-800">
+                                <button onClick={clearAllFilters} className="w-full py-2 text-sm font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">Сбросить всё</button>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -290,7 +328,7 @@ const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
       {isMobileSearchOpen && (
-        <div className="md:hidden border-t border-gray-100 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl animate-slide-up px-4 py-3 absolute left-0 right-0 shadow-xl">
+        <div className="md:hidden border-t border-gray-100 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl animate-slide-up px-4 py-3 absolute left-0 right-0 shadow-xl z-40">
              <form onSubmit={handleSearchSubmit} className="relative">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                 <input ref={mobileSearchInputRef} type="text" className="block w-full pl-9 pr-10 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-black/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-sm transition-all" placeholder="Что будем готовить?" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
@@ -303,10 +341,10 @@ const Navbar: React.FC<NavbarProps> = ({
                         e.stopPropagation();
                         setIsFilterOpen(true);
                     }}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${selectedTags.length > 0 ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-200 text-gray-600'}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${activeFiltersCount > 0 ? 'bg-emerald-100 border-emerald-200 text-emerald-700' : 'bg-gray-50 border-gray-200 text-gray-600'}`}
                 >
                     <Filter className="w-3.5 h-3.5" /> 
-                    Фильтры {selectedTags.length > 0 && `(${selectedTags.length})`}
+                    Фильтры {activeFiltersCount > 0 && `(${activeFiltersCount})`}
                 </button>
              </div>
         </div>
@@ -314,61 +352,90 @@ const Navbar: React.FC<NavbarProps> = ({
 
       {/* Mobile Filter Fullscreen Overlay */}
       {isFilterOpen && (
-        <div className="fixed inset-0 z-[60] bg-white dark:bg-gray-900 sm:hidden flex flex-col animate-slide-up">
-            <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800">
+        <div className="fixed inset-0 z-[100] bg-white dark:bg-gray-900 sm:hidden flex flex-col animate-slide-up h-[100dvh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
                 <button onClick={() => setIsFilterOpen(false)} className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">
                     <ArrowLeft className="w-6 h-6 text-gray-600 dark:text-gray-300" />
                 </button>
                 <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                    <Tag className="w-5 h-5" /> Фильтры
+                    <Filter className="w-5 h-5" /> Фильтры
                 </h2>
-                {selectedTags.length > 0 ? (
-                    <button onClick={clearAllTags} className="text-sm font-bold text-red-500">Сбросить</button>
+                {activeFiltersCount > 0 ? (
+                    <button onClick={clearAllFilters} className="text-sm font-bold text-red-500">Сбросить</button>
                 ) : <div className="w-10" />}
             </div>
             
-            <div className="p-4 border-b border-gray-100 dark:border-gray-800">
-                <div className="relative">
-                    <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
-                    <input 
-                        type="text" 
-                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 border-none outline-none text-gray-900 dark:text-white"
-                        placeholder="Поиск тегов..."
-                        value={tagSearchQuery}
-                        onChange={(e) => setTagSearchQuery(e.target.value)}
-                    />
+            <div className="p-4 space-y-6 pb-24">
+                {/* Mobile Complexity */}
+                <div>
+                     <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><Activity className="w-4 h-4 text-emerald-500" /> Сложность</h3>
+                     <div className="flex flex-wrap gap-2">
+                        {COMPLEXITY_OPTIONS.map(level => (
+                            <button
+                                key={level}
+                                onClick={() => toggleComplexity(level)}
+                                className={`px-4 py-2 rounded-xl border text-sm font-medium transition-all ${selectedComplexity.includes(level) ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'}`}
+                            >
+                                {level}
+                            </button>
+                        ))}
+                    </div>
                 </div>
-            </div>
 
-            <div className="flex-1 overflow-y-auto p-4">
-                 <div className="flex flex-wrap gap-3">
-                    {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
-                        <button
-                            key={tag}
-                            onClick={() => toggleTag(tag)}
-                            className={`px-4 py-2 rounded-xl border text-sm font-medium transition-all ${
-                                selectedTags.includes(tag) 
-                                ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/30' 
-                                : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
-                            }`}
-                        >
-                            {tag}
-                        </button>
-                    )) : (
-                        <div className="w-full py-20 text-center flex flex-col items-center text-gray-400">
-                            <Search className="w-12 h-12 mb-4 opacity-20" />
-                            <p>Ничего не найдено</p>
+                {/* Mobile Time Slider */}
+                <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><Clock className="w-4 h-4 text-emerald-500" /> Время приготовления</h3>
+                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl border border-gray-100 dark:border-gray-700">
+                        <div className="flex justify-between text-sm font-bold text-gray-700 dark:text-gray-300 mb-6">
+                             <span>{formatTime(timeRange[0])}</span>
+                             <span>{formatTime(timeRange[1])}</span>
                         </div>
-                    )}
+                        <div className="relative h-10 px-2">
+                            <input type="range" min="0" max={MAX_TIME_MINUTES} step="5" value={timeRange[0]} onChange={(e) => handleTimeChange(0, parseInt(e.target.value))} onMouseUp={handleTimeCommit} onKeyUp={handleTimeCommit} className="absolute w-full pointer-events-none appearance-none bg-transparent z-20 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-600 [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:appearance-none" style={{ height: '4px' }} />
+                            <input type="range" min="0" max={MAX_TIME_MINUTES} step="5" value={timeRange[1]} onChange={(e) => handleTimeChange(1, parseInt(e.target.value))} onMouseUp={handleTimeCommit} onKeyUp={handleTimeCommit} className="absolute w-full pointer-events-none appearance-none bg-transparent z-20 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-600 [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:appearance-none" style={{ height: '4px' }} />
+                            <div className="absolute top-2.5 left-0 right-0 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full z-10"></div>
+                            <div className="absolute top-2.5 h-1.5 bg-emerald-500 rounded-full z-10" style={{ left: `${(timeRange[0] / MAX_TIME_MINUTES) * 100}%`, right: `${100 - (timeRange[1] / MAX_TIME_MINUTES) * 100}%` }}></div>
+                        </div>
+                     </div>
+                </div>
+
+                {/* Mobile Tags */}
+                <div>
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2"><Tag className="w-4 h-4 text-emerald-500" /> Теги</h3>
+                    <div className="relative mb-4">
+                        <Search className="absolute left-3 top-3.5 w-5 h-5 text-gray-400" />
+                        <input 
+                            type="text" 
+                            className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 border-none outline-none text-gray-900 dark:text-white"
+                            placeholder="Поиск тегов..."
+                            value={tagSearchQuery}
+                            onChange={(e) => setTagSearchQuery(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {filteredAvailableTags.length > 0 ? filteredAvailableTags.map(tag => (
+                            <button
+                                key={tag}
+                                onClick={() => toggleTag(tag)}
+                                className={`px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
+                                    selectedTags.includes(tag) 
+                                    ? 'bg-emerald-500 text-white border-emerald-500 shadow-md' 
+                                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+                                }`}
+                            >
+                                {tag}
+                            </button>
+                        )) : <p className="text-gray-400 text-sm">Ничего не найдено</p>}
+                    </div>
                 </div>
             </div>
             
-            <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
+            <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 sticky bottom-0 z-10">
                 <button 
                     onClick={() => setIsFilterOpen(false)}
                     className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/30 active:scale-95 transition-transform"
                 >
-                    Готово ({selectedTags.length})
+                    Готово ({activeFiltersCount})
                 </button>
             </div>
         </div>

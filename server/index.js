@@ -456,6 +456,28 @@ app.post('/api/notifications', async (req, res) => {
   }
 });
 
+app.post('/api/notifications/broadcast', async (req, res) => {
+    try {
+        const { title, message, type } = req.body;
+        if (!title || !message) return res.status(400).json({ message: "Заголовок и сообщение обязательны" });
+        
+        const notification = {
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+            type: type || 'info',
+            title,
+            message,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+            userId: 'all' // Virtual ID for broadcast
+        };
+        
+        notifyClients('GLOBAL_NOTIFICATION', notification);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.put('/api/notifications/:id/read', async (req, res) => {
   try {
       const { id } = req.params;

@@ -31,6 +31,11 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ currentUser, on
                     setNotifications(prev => [newNotif, ...prev]);
                     setUnreadCount(prev => prev + 1);
                 }
+            } else if (type === 'GLOBAL_NOTIFICATION') {
+                // Handle broadcast notifications (added dynamically without fetch)
+                const globalNotif = payload as Notification;
+                setNotifications(prev => [globalNotif, ...prev]);
+                setUnreadCount(prev => prev + 1);
             }
         });
 
@@ -56,7 +61,12 @@ const NotificationCenter: React.FC<NotificationCenterProps> = ({ currentUser, on
     }, []);
 
     const handleMarkRead = async (id: string) => {
-        await StorageService.markNotificationRead(id);
+        // Only call API if it's a real user notification (not virtual global one if we don't save globals per user)
+        // For simplicity, we assume fire-and-forget for global ones in UI state if not persisted individually
+        try {
+             await StorageService.markNotificationRead(id);
+        } catch(e) {} // Ignore error for virtual IDs
+        
         setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
         setUnreadCount(prev => Math.max(0, prev - 1));
     };

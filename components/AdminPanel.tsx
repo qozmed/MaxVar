@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Recipe, RawRecipeImport, Report, RecipeImage } from '../types';
 import { StorageService } from '../services/storage';
-import { ShieldAlert, Check, X, Search, Filter, FileJson, Database, Trash2, Loader2, ExternalLink, CheckCircle, LogOut } from 'lucide-react';
+import { ShieldAlert, Check, X, Search, Filter, FileJson, Database, Trash2, Loader2, ExternalLink, CheckCircle, LogOut, Radio, Send } from 'lucide-react';
 import { useModal } from './ModalProvider';
 
 interface AdminPanelProps {
@@ -14,7 +14,7 @@ interface AdminPanelProps {
 const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSelect, onTagClick }) => {
   const { showAlert, showConfirm } = useModal();
   
-  const [activeTab, setActiveTab] = useState<'photos' | 'users' | 'import' | 'reports' | 'database'>('photos');
+  const [activeTab, setActiveTab] = useState<'photos' | 'users' | 'import' | 'reports' | 'database' | 'broadcast'>('photos');
   
   const [photoFilter, setPhotoFilter] = useState<'pending' | 'approved' | 'rejected'>('pending');
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -32,6 +32,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
   // Database Tab State
   const [deleteRecipeId, setDeleteRecipeId] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Broadcast Tab State
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastType, setBroadcastType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -154,6 +160,28 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
       }
   };
 
+  const handleSendBroadcast = async () => {
+      if (!broadcastTitle.trim() || !broadcastMessage.trim()) {
+          showAlert("Ошибка", "Заполните заголовок и сообщение", "error");
+          return;
+      }
+      
+      const confirmed = await showConfirm("Рассылка", "Отправить это уведомление всем активным пользователям?");
+      if (!confirmed) return;
+
+      setIsBroadcasting(true);
+      try {
+          await StorageService.sendGlobalBroadcast(broadcastTitle, broadcastMessage, broadcastType);
+          showAlert("Успех", "Уведомление отправлено всем пользователям.", "success");
+          setBroadcastTitle('');
+          setBroadcastMessage('');
+      } catch (e) {
+          showAlert("Ошибка", "Не удалось отправить рассылку.", "error");
+      } finally {
+          setIsBroadcasting(false);
+      }
+  };
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
@@ -222,10 +250,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
                 Пользователи ({users.length})
             </button>
             <button 
+                onClick={() => setActiveTab('broadcast')} 
+                className={`px-4 sm:px-6 py-3 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${activeTab === 'broadcast' ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+            >
+                <Radio className="w-4 h-4" /> Рассылка
+            </button>
+            <button 
                 onClick={() => setActiveTab('database')} 
                 className={`px-4 sm:px-6 py-3 font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'database' ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
             >
-                Управление БД
+                БД
             </button>
             <button 
                 onClick={() => setActiveTab('import')} 
@@ -301,8 +335,55 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
             </div>
         )}
 
-        {/* --- ADMIN ONLY TABS --- */}
-        
+        {/* --- BROADCAST TAB --- */}
+        {activeTab === 'broadcast' && (
+            <div className="glass-panel rounded-2xl p-6 sm:p-10 max-w-2xl mx-auto dark:bg-gray-900 dark:border-gray-800">
+                <div className="text-center mb-8">
+                     <div className="inline-block p-4 bg-purple-100 dark:bg-purple-900/20 rounded-full text-purple-600 mb-4"><Radio className="w-8 h-8" /></div>
+                     <h2 className="text-2xl font-bold dark:text-white">Глобальное уведомление</h2>
+                     <p className="text-gray-500 dark:text-gray-400 mt-2">Сообщение получат все пользователи, находящиеся сейчас на сайте.</p>
+                </div>
+                
+                <div className="space-y-4">
+                     <div>
+                         <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Заголовок</label>
+                         <input type="text" value={broadcastTitle} onChange={(e) => setBroadcastTitle(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-white/5 focus:ring-2 focus:ring-purple-500 outline-none dark:text-white" placeholder="Например: Технические работы" />
+                     </div>
+                     <div>
+                         <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Сообщение</label>
+                         <textarea value={broadcastMessage} onChange={(e) => setBroadcastMessage(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-white/5 focus:ring-2 focus:ring-purple-500 outline-none h-32 resize-none dark:text-white" placeholder="Текст уведомления..." />
+                     </div>
+                     
+                     <div>
+                         <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Тип уведомления</label>
+                         <div className="grid grid-cols-4 gap-2">
+                             {(['info', 'success', 'warning', 'error'] as const).map(type => (
+                                 <button
+                                    key={type}
+                                    onClick={() => setBroadcastType(type)}
+                                    className={`py-2 rounded-lg text-sm font-medium border-2 transition-all capitalize ${broadcastType === type ? 
+                                        (type === 'info' ? 'border-blue-500 bg-blue-50 text-blue-700' : type === 'success' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : type === 'warning' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-red-500 bg-red-50 text-red-700') 
+                                        : 'border-transparent bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}`}
+                                 >
+                                     {type}
+                                 </button>
+                             ))}
+                         </div>
+                     </div>
+                     
+                     <button 
+                        onClick={handleSendBroadcast} 
+                        disabled={isBroadcasting} 
+                        className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-lg shadow-purple-500/30 flex items-center justify-center gap-2 mt-4 active:scale-95 transition-all disabled:opacity-50"
+                     >
+                         {isBroadcasting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                         Отправить всем
+                     </button>
+                </div>
+            </div>
+        )}
+
+        {/* --- DATABASE TAB --- */}
         {activeTab === 'database' && (
             <div className="glass-panel rounded-2xl p-8 max-w-2xl mx-auto dark:bg-gray-900 dark:border-gray-800">
                 <div className="text-center mb-8">
@@ -337,6 +418,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
             </div>
         )}
 
+        {/* --- USERS TAB --- */}
         {activeTab === 'users' && (
             <div className="glass-panel rounded-2xl overflow-hidden dark:bg-gray-900 dark:border-gray-800">
                 <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex gap-3">
@@ -361,6 +443,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
             </div>
         )}
 
+        {/* --- IMPORT TAB --- */}
         {activeTab === 'import' && (
              <div className="glass-panel rounded-2xl p-8 text-center dark:bg-gray-900 dark:border-gray-800">
                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-full text-blue-600 inline-block mb-4"><FileJson className="w-12 h-12" /></div>
