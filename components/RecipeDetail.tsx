@@ -27,7 +27,6 @@ const REPORT_REASONS = [
     "Другое"
 ];
 
-// Helper to render role badge
 const RoleBadge: React.FC<{ role?: string }> = ({ role }) => {
     if (role === 'admin') {
         return <span title="Администратор" className="flex items-center"><ShieldAlert className="w-3.5 h-3.5 text-red-500 fill-red-100 dark:fill-red-900" /></span>;
@@ -47,17 +46,14 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
   const [hoverRating, setHoverRating] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Reply state
   const [replyingToId, setReplyingToId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
 
-  // Report State
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportReason, setReportReason] = useState<string | null>(null);
   const [customReportDetails, setCustomReportDetails] = useState('');
   const [isReporting, setIsReporting] = useState(false);
   
-  // Vote Debounce State
   const [processingVotes, setProcessingVotes] = useState<Set<string>>(new Set());
 
   const comments = recipe?.comments || [];
@@ -96,7 +92,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
     let updatedComments = [...comments];
 
     if (parentCommentId) {
-        // Find parent and add reply
         updatedComments = comments.map(c => {
             if (c.id === parentCommentId) {
                 return {
@@ -107,7 +102,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
             return c;
         });
 
-        // Notify parent author
         const parentComment = comments.find(c => c.id === parentCommentId);
         if (parentComment && parentComment.user !== currentUser.name) {
              try {
@@ -161,44 +155,34 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       onUpdateRecipe(updatedRecipe);
   };
 
-  // Logic to handle votes (likes/dislikes)
   const handleVote = async (commentId: string, type: 'like' | 'dislike', parentId?: string, commentAuthor?: string) => {
       if (!currentUser || !recipe) {
           showAlert("Внимание", "Войдите, чтобы голосовать.");
           return;
       }
       
-      // DEBOUNCE / LOCK: Prevent spam clicking
       if (processingVotes.has(commentId)) return;
 
-      // Lock this comment
       setProcessingVotes(prev => { const next = new Set(prev); next.add(commentId); return next; });
 
       try {
-        // Clone votedComments map
         const userVotes = { ...(currentUser.votedComments || {}) };
-        const currentVote = userVotes[commentId]; // 'like' | 'dislike' | undefined
+        const currentVote = userVotes[commentId];
 
-        // Prevent spamming / illogical states strictly
         if (currentVote === type) {
-            // Already voted this way -> Remove vote (toggle off)
             delete userVotes[commentId];
         } else {
-            // No vote OR swapping vote -> Set new vote
             userVotes[commentId] = type;
         }
 
-        // Helper function to update a specific comment node's counts
         const updateCommentNode = (node: Comment) => {
             let newLikes = node.likes;
             let newDislikes = node.dislikes;
 
             if (currentVote === type) {
-                // Toggle off
                 if (type === 'like') newLikes--;
                 else newDislikes--;
             } else if (currentVote) {
-                // Swap
                 if (type === 'like') {
                     newLikes++;
                     newDislikes--;
@@ -207,14 +191,12 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                     newLikes--;
                 }
             } else {
-                // New Vote
                 if (type === 'like') newLikes++;
                 else newDislikes++;
             }
             return { ...node, likes: Math.max(0, newLikes), dislikes: Math.max(0, newDislikes) };
         };
 
-        // Traverse and update comments
         let updatedComments = [...comments];
         if (parentId) {
             updatedComments = comments.map(c => {
@@ -234,14 +216,11 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
             });
         }
 
-        // Update Local User State
         onUpdateUser({ ...currentUser, votedComments: userVotes });
 
-        // Update Recipe State
         const updatedRecipe = { ...recipe, comments: updatedComments };
         onUpdateRecipe(updatedRecipe);
 
-        // Send Notification ONLY if it's a new positive vote (or dislike if you want) and not self-vote
         if (!currentVote && commentAuthor && commentAuthor !== currentUser.name) {
             try {
                 await StorageService.sendNotification({
@@ -254,11 +233,9 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
             } catch(e) { console.error(e); }
         }
       } finally {
-        // Unlock after short delay to prevent machine-gun clicking
-        // INCREASED DEBOUNCE TIME TO 2000ms
         setTimeout(() => {
             setProcessingVotes(prev => { const next = new Set(prev); next.delete(commentId); return next; });
-        }, 2000);
+        }, 800);
       }
   };
 
@@ -346,7 +323,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
   const currentImage = visibleImages[currentImageIndex];
 
   const renderComment = (comment: Comment, isReply = false, parentId?: string) => {
-      const userVote = currentUser?.votedComments?.[comment.id]; // 'like' | 'dislike' | undefined
+      const userVote = currentUser?.votedComments?.[comment.id];
       const liveUser = userMap ? userMap[comment.user] : undefined;
       const liveAvatar = liveUser?.avatar;
       const userRole = liveUser?.role || 'user';
@@ -389,11 +366,9 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                             </button>
                         )}
                     </div>
-                    {/* Render comment text without dangerouslySetInnerHTML, React escapes automatically */}
                     <p className="text-sm sm:text-base text-gray-700 dark:text-gray-300 mb-3 whitespace-pre-wrap break-words">{comment.text}</p>
                     
                     <div className="flex items-center gap-4">
-                        {/* Interactive Likes/Dislikes */}
                         <div className={`flex items-center gap-3 bg-gray-50 dark:bg-black/20 px-2 py-1 rounded-lg border border-gray-100 dark:border-gray-700 ${isLocked ? 'opacity-50 cursor-wait' : ''}`}>
                             <button 
                                 onClick={() => handleVote(comment.id, 'like', parentId, comment.user)}
@@ -424,7 +399,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                         )}
                     </div>
 
-                    {/* Reply Input */}
                     {!isReply && replyingToId === comment.id && (
                         <form onSubmit={(e) => handleCommentSubmit(e, comment.id)} className="mt-3 flex gap-2 animate-fade-in">
                              <input 
@@ -445,7 +419,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                         </form>
                     )}
 
-                    {/* Render Replies */}
                     {comment.replies && comment.replies.length > 0 && (
                         <div className="mt-2">
                             {comment.replies.map(reply => renderComment(reply, true, comment.id))}
@@ -458,7 +431,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
 
   return (
     <div className="max-w-6xl mx-auto px-4 pb-20 pt-4 animate-fade-in relative">
-      {/* Nav Header */}
       <div className="flex items-center justify-between mb-6">
         <button 
             onClick={onBack}
@@ -486,7 +458,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 mb-12">
-        {/* Image Carousel */}
         <div className="lg:col-span-7 relative h-72 sm:h-96 lg:h-[500px] rounded-3xl overflow-hidden shadow-2xl group bg-gray-100 dark:bg-gray-800">
             {visibleImages.length > 0 && currentImage ? (
                 <>
@@ -515,7 +486,6 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
             )}
         </div>
         
-        {/* Info Section */}
         <div className="lg:col-span-5 flex flex-col">
             <div className="flex flex-wrap gap-2 mb-4">
                 {(recipe.parsed_content.tags || []).map(tag => (
