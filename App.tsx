@@ -29,8 +29,11 @@ const AppContent: React.FC = () => {
   const [allUsers, setAllUsers] = useState<User[]>([]); // Store all users for avatars lookup
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   
+  // SEARCH & FILTER STATE
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedComplexity, setSelectedComplexity] = useState<string[]>([]);
+  const [selectedTimeRange, setSelectedTimeRange] = useState<[number, number]>([0, 180]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [totalRecipes, setTotalRecipes] = useState(0);
@@ -65,6 +68,8 @@ const AppContent: React.FC = () => {
       if (savedState) {
           if (savedState.searchQuery) setSearchQuery(savedState.searchQuery);
           if (savedState.tags) setSelectedTags(savedState.tags);
+          // Note: Complexity and Time are not currently persisted in basic app state, 
+          // but could be added here if needed.
 
           if (savedState.view === AppView.RECIPE_DETAIL && savedState.selectedRecipeId) {
              try {
@@ -104,10 +109,20 @@ const AppContent: React.FC = () => {
 
       // Initial Fetch (if not restored to a specific detail view, load feed)
       if (!restored || savedState?.view === AppView.HOME) {
-          await fetchMainContent(savedState?.searchQuery || '', savedState?.tags || []);
+          await fetchMainContent(
+              savedState?.searchQuery || '', 
+              savedState?.tags || [],
+              [], 
+              [0, 180]
+          );
       } else {
           // Still fetch main content in background so navigation back works
-          fetchMainContent(savedState?.searchQuery || '', savedState?.tags || []);
+          fetchMainContent(
+              savedState?.searchQuery || '', 
+              savedState?.tags || [],
+              [], 
+              [0, 180]
+          );
       }
 
       setIsInitialized(true);
@@ -155,7 +170,7 @@ const AppContent: React.FC = () => {
                   return currentSelected;
               });
           } else if (type === 'RECIPES_IMPORTED') {
-              fetchMainContent(searchQuery, selectedTags);
+              fetchMainContent(searchQuery, selectedTags, selectedComplexity, selectedTimeRange);
           } else if (type === 'USER_UPDATED') {
               const updatedUser = payload as User;
               
@@ -188,13 +203,18 @@ const AppContent: React.FC = () => {
       });
 
       return () => unsubscribe();
-  }, [performLogout, showAlert, searchQuery, selectedTags]);
+  }, [performLogout, showAlert, searchQuery, selectedTags, selectedComplexity, selectedTimeRange]);
 
-  const fetchMainContent = async (query: string = '', tags: string[] = []) => {
+  const fetchMainContent = async (
+      query: string = '', 
+      tags: string[] = [], 
+      complexity: string[] = [], 
+      time: [number, number] = [0, 180]
+    ) => {
       setIsLoadingRecipes(true);
       try {
           // 1. Fetch Main Feed (Newest with Filters)
-          const result = await StorageService.searchRecipes(query, 1, ITEMS_PER_PAGE, 'newest', tags);
+          const result = await StorageService.searchRecipes(query, 1, ITEMS_PER_PAGE, 'newest', tags, complexity, time);
           setRecipes(result.data);
           setTotalRecipes(result.pagination.total);
           setCurrentPage(1);
@@ -202,8 +222,8 @@ const AppContent: React.FC = () => {
           // Check offline status again after request
           setIsOffline(StorageService.isOfflineMode);
 
-          // 2. Fetch Featured (Popular) - Only if no search active
-          if (!query && tags.length === 0) {
+          // 2. Fetch Featured (Popular) - Only if no search/filter active
+          if (!query && tags.length === 0 && complexity.length === 0 && (time[0] === 0 && time[1] === 180)) {
             const featured = await StorageService.searchRecipes('', 1, 3, 'popular');
             setFeaturedRecipes(featured.data);
 
@@ -225,7 +245,7 @@ const AppContent: React.FC = () => {
       const nextPage = currentPage + 1;
       setIsLoadingRecipes(true);
       try {
-          const result = await StorageService.searchRecipes(searchQuery, nextPage, ITEMS_PER_PAGE, 'newest', selectedTags);
+          const result = await StorageService.searchRecipes(searchQuery, nextPage, ITEMS_PER_PAGE, 'newest', selectedTags, selectedComplexity, selectedTimeRange);
           setRecipes(prev => [...prev, ...result.data]); // Append new recipes
           setCurrentPage(nextPage);
       } catch (e) {
@@ -235,12 +255,20 @@ const AppContent: React.FC = () => {
       }
   };
 
-  // Handle search
-  const handleSearch = useCallback(async (query: string, tags: string[] = []) => {
+  // Handle search & filters
+  const handleSearch = useCallback(async (
+      query: string, 
+      tags: string[] = [], 
+      complexity: string[] = [], 
+      timeRange: [number, number] = [0, 180]
+    ) => {
     setSearchQuery(query);
     setSelectedTags(tags);
+    setSelectedComplexity(complexity);
+    setSelectedTimeRange(timeRange);
+    
     setView(AppView.HOME);
-    await fetchMainContent(query, tags);
+    await fetchMainContent(query, tags, complexity, timeRange);
   }, []);
 
   const handleTagClick = useCallback((tag: string) => {
@@ -248,15 +276,22 @@ const AppContent: React.FC = () => {
       setSearchQuery('');
       const newTags = [tag];
       setSelectedTags(newTags);
+      setSelectedComplexity([]);
+      setSelectedTimeRange([0, 180]);
+      
       setView(AppView.HOME);
       window.scrollTo(0, 0);
-      fetchMainContent('', newTags);
+      fetchMainContent('', newTags, [], [0, 180]);
   }, []);
 
   const handleClearTag = (tagToRem: string) => {
       const newTags = selectedTags.filter(t => t !== tagToRem);
       setSelectedTags(newTags);
-      fetchMainContent(searchQuery, newTags);
+      fetchMainContent(searchQuery, newTags, selectedComplexity, selectedTimeRange);
+  };
+  
+  const handleClearFilters = () => {
+      handleSearch('', [], [], [0, 180]);
   };
 
   // Handle recipe click
@@ -401,6 +436,8 @@ const AppContent: React.FC = () => {
 
   const currentFavorites = currentUser?.favorites || [];
 
+  const isFilterActive = selectedTags.length > 0 || selectedComplexity.length > 0 || (selectedTimeRange[0] > 0 || selectedTimeRange[1] < 180);
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar 
@@ -410,7 +447,7 @@ const AppContent: React.FC = () => {
         onLogout={handleUserLogout}
         toggleTheme={toggleTheme}
         isDarkMode={isDarkMode}
-        goHome={() => handleSearch('', [])}
+        goHome={handleClearFilters}
         onProfileClick={() => { setView(AppView.PROFILE); window.scrollTo(0,0); }}
         onAdminClick={() => { setView(AppView.ADMIN); window.scrollTo(0,0); }}
         onRecipeSelect={handleRecipeClick}
@@ -430,8 +467,8 @@ const AppContent: React.FC = () => {
 
         {view === AppView.HOME && (
           <div className="animate-fade-in">
-             {/* Hero Section - only when no search active */}
-             {!searchQuery && selectedTags.length === 0 && (
+             {/* Hero Section - only when no search/filter active */}
+             {!searchQuery && !isFilterActive && (
                  <div className="text-center py-8 sm:py-12 md:py-20">
                     <span className="text-emerald-600 dark:text-emerald-400 font-bold tracking-widest uppercase text-xs sm:text-sm mb-2 block">
                       Кулинарное Вдохновение
@@ -445,8 +482,8 @@ const AppContent: React.FC = () => {
                  </div>
              )}
 
-             {/* Selected Tags Display */}
-             {selectedTags.length > 0 && (
+             {/* Selected Filters Display */}
+             {isFilterActive && (
                  <div className="flex flex-wrap gap-2 justify-center mb-8">
                      {selectedTags.map(tag => (
                          <div key={tag} className="flex items-center gap-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-3 py-1 rounded-full text-sm font-bold">
@@ -454,12 +491,27 @@ const AppContent: React.FC = () => {
                              <button onClick={() => handleClearTag(tag)} className="hover:text-emerald-900"><X className="w-4 h-4"/></button>
                          </div>
                      ))}
-                     <button onClick={() => handleSearch(searchQuery, [])} className="text-sm text-gray-500 underline hover:text-emerald-600">Сбросить</button>
+                     {selectedComplexity.map(c => (
+                         <div key={c} className="flex items-center gap-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-3 py-1 rounded-full text-sm font-bold">
+                             <span>{c}</span>
+                             <button onClick={() => {
+                                 const newC = selectedComplexity.filter(x => x !== c);
+                                 handleSearch(searchQuery, selectedTags, newC, selectedTimeRange);
+                             }} className="hover:text-blue-900"><X className="w-4 h-4"/></button>
+                         </div>
+                     ))}
+                     {(selectedTimeRange[0] > 0 || selectedTimeRange[1] < 180) && (
+                         <div className="flex items-center gap-2 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full text-sm font-bold">
+                             <span>{selectedTimeRange[0]} - {selectedTimeRange[1] === 180 ? '3ч+' : selectedTimeRange[1] + 'мин'}</span>
+                             <button onClick={() => handleSearch(searchQuery, selectedTags, selectedComplexity, [0, 180])} className="hover:text-amber-900"><X className="w-4 h-4"/></button>
+                         </div>
+                     )}
+                     <button onClick={handleClearFilters} className="text-sm text-gray-500 underline hover:text-emerald-600">Сбросить всё</button>
                  </div>
              )}
 
-             {/* Feeds - Only show if no search */}
-             {!searchQuery && selectedTags.length === 0 && (
+             {/* Feeds - Only show if no search/filter */}
+             {!searchQuery && !isFilterActive && (
                <div className="space-y-12 sm:space-y-16 mb-12 sm:mb-16">
                   {featuredRecipes.length > 0 && (
                       <section>
@@ -496,7 +548,7 @@ const AppContent: React.FC = () => {
                 <div className="flex items-center gap-2 mb-6">
                     <div className="h-px flex-grow bg-gray-200 dark:bg-gray-800"></div>
                     <h2 className="font-serif text-lg sm:text-2xl font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest text-center whitespace-nowrap">
-                        {searchQuery || selectedTags.length > 0 ? "Результаты поиска" : "Свежие Рецепты"}
+                        {searchQuery || isFilterActive ? "Результаты поиска" : "Свежие Рецепты"}
                     </h2>
                     <div className="h-px flex-grow bg-gray-200 dark:bg-gray-800"></div>
                 </div>

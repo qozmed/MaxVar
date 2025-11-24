@@ -10,21 +10,24 @@ const parseCookingTime = (timeStr: string): number => {
     let minutes = 0;
     const lower = timeStr.toLowerCase();
     
-    // Extract hours
-    const hoursMatch = lower.match(/(\d+)\s*(?:ч|час|h|hour)/);
-    if (hoursMatch) minutes += parseInt(hoursMatch[1]) * 60;
+    // Normalize string: replace commas with dots for decimals
+    const normalized = lower.replace(',', '.');
+
+    // Extract hours (matches "1.5 h", "2 hours", "1 час")
+    const hoursMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:ч|час|h|hour)/);
+    if (hoursMatch) minutes += parseFloat(hoursMatch[1]) * 60;
     
-    // Extract minutes
-    const minMatch = lower.match(/(\d+)\s*(?:м|мин|min)/);
+    // Extract minutes (matches "30 min", "45 м", "30 минут")
+    const minMatch = normalized.match(/(\d+)\s*(?:м|мин|min)/);
     if (minMatch) minutes += parseInt(minMatch[1]);
     
     // If no units found but just a number (e.g. "45"), assume minutes
     if (!hoursMatch && !minMatch) {
-        const num = parseInt(lower.replace(/\D/g, ''));
+        const num = parseInt(normalized.replace(/\D/g, ''));
         if (!isNaN(num)) minutes = num;
     }
 
-    return minutes;
+    return Math.round(minutes);
 };
 
 interface RecipeResponse {
@@ -212,17 +215,8 @@ class StorageServiceImpl {
 
           if (tags.length > 0) params.append('tags', tags.join(','));
           
-          // NOTE: Mongo query for time/complexity range on string fields is complex.
-          // For this implementation, we will fetch results and filter client-side/in-memory logic for strict consistency 
-          // or we pass them and let server handle if possible. 
-          // Given the current simple server, let's fetch slightly more and filter here if needed, 
-          // OR fallback to local filtering which is more robust for this "simulated" backend structure.
-          
-          // Actually, let's try to pass them. But the server endpoint needs to support them.
-          // Since we can't easily change the server schema logic to number for DB range query in this prompt,
-          // we will rely on the "Fallback" logic below which handles everything perfectly in memory.
-          // TO SIMULATE PROPER SERVER: We will throw here if complex filters are used so it falls back to local logic
-          // which simulates a smart search engine better than the simple mongo code provided.
+          // FORCE CLIENT-SIDE FILTERING FOR COMPLEX QUERIES 
+          // (Since backend API implementation for these is currently simulated)
           if (complexity.length > 0 || (timeRange[0] > 0 || timeRange[1] < 180)) {
                throw new Error("Trigger Client Side Filtering for Complex Queries");
           }
