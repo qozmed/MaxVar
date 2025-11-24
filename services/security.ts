@@ -1,4 +1,3 @@
-
 // Basic list of offensive words (Russian and English)
 const BAD_WORDS = [
   'fuck', 'shit', 'bitch', 'ass', 'stupid', 'idiot',
@@ -8,19 +7,15 @@ const BAD_WORDS = [
 export const SecurityService = {
   /**
    * Basic XSS Sanitization
-   * Prevents script injection by escaping HTML characters.
+   * Only escape critical HTML tags. React handles most text escaping automatically.
+   * We do NOT want to escape / or ' or " excessively as it breaks readability.
    */
   sanitize: (input: string): string => {
-    const map: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#x27;',
-      "/": '&#x2F;',
-    };
-    const reg = /[&<>"'/]/ig;
-    return input.replace(reg, (match) => (map[match]));
+    if (!input) return '';
+    // Only escape < and > to prevent injection of script tags or HTML structure
+    return input
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
   },
 
   /**
@@ -30,6 +25,7 @@ export const SecurityService = {
   filterProfanity: (text: string): string => {
     let filteredText = text;
     BAD_WORDS.forEach(word => {
+      // Use word boundary to avoid replacing substrings in legitimate words
       const regex = new RegExp(`\\b${word}\\b`, 'gi');
       filteredText = filteredText.replace(regex, '***');
     });

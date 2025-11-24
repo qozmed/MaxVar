@@ -255,9 +255,10 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
         }
       } finally {
         // Unlock after short delay to prevent machine-gun clicking
+        // INCREASED DEBOUNCE TIME TO 2000ms
         setTimeout(() => {
             setProcessingVotes(prev => { const next = new Set(prev); next.delete(commentId); return next; });
-        }, 500);
+        }, 2000);
       }
   };
 
@@ -388,6 +389,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
                             </button>
                         )}
                     </div>
+                    {/* Render comment text without dangerouslySetInnerHTML, React escapes automatically */}
                     <p className="text-sm sm:text-base text-gray-700 dark:text-gray-300 mb-3 whitespace-pre-wrap break-words">{comment.text}</p>
                     
                     <div className="flex items-center gap-4">
