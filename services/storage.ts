@@ -214,11 +214,10 @@ class StorageServiceImpl {
           });
 
           if (tags.length > 0) params.append('tags', tags.join(','));
-          
-          // FORCE CLIENT-SIDE FILTERING FOR COMPLEX QUERIES 
-          // (Since backend API implementation for these is currently simulated)
-          if (complexity.length > 0 || (timeRange[0] > 0 || timeRange[1] < 180)) {
-               throw new Error("Trigger Client Side Filtering for Complex Queries");
+          if (complexity.length > 0) params.append('complexity', complexity.join(','));
+          if (timeRange[0] > 0 || timeRange[1] < 180) {
+              params.append('minTime', timeRange[0].toString());
+              params.append('maxTime', timeRange[1].toString());
           }
           
           const response = await fetch(`/api/recipes?${params.toString()}`);
@@ -234,7 +233,7 @@ class StorageServiceImpl {
           return json;
 
       } catch (e) {
-          if (!this.isOfflineMode && !(e instanceof Error && e.message.includes("Trigger Client"))) {
+          if (!this.isOfflineMode) {
              console.error("API Search failed, using local fallback:", e);
              if (e instanceof Error && (e.message.includes('fetch') || e.message.includes('Offline'))) {
                  this.isOfflineMode = true;

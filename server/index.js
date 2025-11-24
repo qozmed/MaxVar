@@ -86,6 +86,23 @@ const notifyClients = (type, payload) => {
   });
 };
 
+// Helper to parse "1 hour 30 min" to minutes
+const parseCookingTime = (timeStr) => {
+    if (!timeStr) return 0;
+    let minutes = 0;
+    const lower = timeStr.toLowerCase();
+    const normalized = lower.replace(',', '.');
+    const hoursMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:ч|час|h|hour)/);
+    if (hoursMatch) minutes += parseFloat(hoursMatch[1]) * 60;
+    const minMatch = normalized.match(/(\d+)\s*(?:м|мин|min)/);
+    if (minMatch) minutes += parseInt(minMatch[1]);
+    if (!hoursMatch && !minMatch) {
+        const num = parseInt(normalized.replace(/\D/g, ''));
+        if (!isNaN(num)) minutes = num;
+    }
+    return Math.round(minutes);
+};
+
 // --- ROUTES ---
 
 app.get('/api/events', (req, res) => {
@@ -130,6 +147,12 @@ app.get('/api/recipes', async (req, res) => {
     const tagsParam = req.query.tags || ''; 
     const tags = tagsParam ? tagsParam.split(',') : [];
     
+    // New Filters
+    const complexityParam = req.query.complexity || '';
+    const complexity = complexityParam ? complexityParam.split(',') : [];
+    const minTime = parseInt(req.query.minTime) || 0;
+    const maxTime = parseInt(req.query.maxTime) || 10000; // default high if not provided
+
     if (req.query.ids !== undefined) {
         const idsStr = req.query.ids || '';
         const ids = idsStr.split(',').filter(id => id.trim().length > 0);
@@ -141,6 +164,8 @@ app.get('/api/recipes', async (req, res) => {
             return res.json({ data: recipes, pagination: { total: recipes.length, page: 1, pages: 1 } });
         }
     }
+
+    let results = [];
 
     if (isMongoConnected) {
       const query = {};
@@ -155,52 +180,79 @@ app.get('/api/recipes', async (req, res) => {
         ];
       }
 
-      // Tag Filtering (AND logic: recipe must have ALL selected tags)
+      // Tag Filtering (AND logic)
       if (tags.length > 0) {
           query['parsed_content.tags'] = { $all: tags };
       }
 
+      // Complexity Filtering (IN logic)
+      if (complexity.length > 0) {
+          query['parsed_content.complexity'] = { $in: complexity };
+      }
+
+      // Fetch all matches for the main query first (without time)
+      // Note: For massive datasets, we should store time as number in DB. 
+      // For this 16k prototype, fetching subset then filtering in JS is acceptable.
       let sortOption = { createdAt: -1 };
       if (sort === 'popular') sortOption = { rating: -1, ratingCount: -1 };
       if (sort === 'discussed') sortOption = { 'comments.length': -1 }; 
       if (sort === 'updated') sortOption = { updatedAt: -1 };
 
-      const total = await RecipeModel.countDocuments(query);
-      const recipes = await RecipeModel.find(query).sort(sortOption).skip((page - 1) * limit).limit(limit);
+      results = await RecipeModel.find(query).sort(sortOption);
 
-      res.json({ data: recipes, pagination: { total, page, pages: Math.ceil(total / limit) } });
     } else {
-      let filtered = memRecipes;
+      // In-Memory filtering
+      results = memRecipes;
       
-      // Filter by Tags
+      // Tags
       if (tags.length > 0) {
-          filtered = filtered.filter(r => {
+          results = results.filter(r => {
               const recipeTags = r.parsed_content?.tags || [];
               return tags.every(t => recipeTags.includes(t));
           });
       }
 
-      // Filter by Search Text
+      // Complexity
+      if (complexity.length > 0) {
+          results = results.filter(r => complexity.includes(r.parsed_content?.complexity));
+      }
+
+      // Search
       if (search) {
         const lowerSearch = search.toLowerCase();
-        filtered = filtered.filter(r => {
+        results = results.filter(r => {
           const name = r.parsed_content?.dish_name?.toLowerCase() || '';
           const rTags = r.parsed_content?.tags || [];
           const ings = r.parsed_content?.ingredients || [];
           return name.includes(lowerSearch) || rTags.some(t => t.toLowerCase().includes(lowerSearch)) || ings.some(i => i.toLowerCase().includes(lowerSearch));
         });
       }
-
-      if (sort === 'popular') filtered.sort((a, b) => b.rating - a.rating);
-      else if (sort === 'newest') filtered = [...filtered].reverse();
-
-      const total = filtered.length;
-      const start = (page - 1) * limit;
-      const end = start + limit;
-      const paginatedData = filtered.slice(start, end);
-      res.json({ data: paginatedData, pagination: { total, page, pages: Math.ceil(total / limit) } });
+      
+      if (sort === 'popular') results.sort((a, b) => b.rating - a.rating);
+      else if (sort === 'newest') results = [...results].reverse();
     }
+
+    // --- TIME FILTERING (Post-processing) ---
+    if (minTime > 0 || maxTime < 180) { // Only filter if constraints exist
+        results = results.filter(r => {
+            const tStr = r.parsed_content?.cooking_time;
+            if (!tStr) return false;
+            const mins = parseCookingTime(tStr);
+            const effectiveMax = maxTime === 180 ? 99999 : maxTime;
+            return mins >= minTime && mins <= effectiveMax;
+        });
+    }
+
+    // Pagination
+    const total = results.length;
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const data = results.slice(start, end);
+
+    res.json({ data, pagination: { total, page, pages: Math.ceil(total / limit) } });
+
   } catch (e) {
+    console.error(e);
     res.status(500).json({ error: "Server Error", data: [], pagination: { total: 0, page: 1, pages: 0 } });
   }
 });
