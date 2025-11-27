@@ -38,15 +38,12 @@ const recipeSchema = new mongoose.Schema({
   comments: [commentSchema]
 }, { timestamps: true });
 
-// COMPOUND INDEXES FOR SORTING OPTIMIZATION (Crucial for Memory Limit Fix)
-// Allows sorting by rating desc, then count desc without memory overflow
+// COMPOUND INDEXES FOR SORTING OPTIMIZATION
 recipeSchema.index({ rating: -1, ratingCount: -1 });
-// Allows fast sorting by date
 recipeSchema.index({ createdAt: -1 });
 recipeSchema.index({ updatedAt: -1 });
 
 // TEXT INDEX FOR HIGH PERFORMANCE SEARCH
-// Replaces slow Regex scan for main search queries
 recipeSchema.index({ 
   'parsed_content.dish_name': 'text', 
   'parsed_content.tags': 'text',
@@ -61,18 +58,29 @@ recipeSchema.index({
 });
 
 const userSchema = new mongoose.Schema({
-  numericId: { type: String, unique: true },
+  numericId: { type: String, unique: true, index: true },
   email: { 
     type: String, 
     unique: true, 
     required: true, 
     lowercase: true,
     trim: true,
-    index: true // Fast lookup
+    index: true 
   },
   name: { type: String, required: true },
   password: { type: String, select: false, required: true },
   salt: { type: String, select: false }, // For password hashing
+  
+  // Verification Fields
+  // --- TOTP (Google Authenticator) Secret ---
+  totpSecret: { type: String, select: false },
+
+  // Legacy (Email) - kept for structure but unused in new flow
+  verificationCode: { type: String, select: false },
+  verificationCodeExpires: { type: Date, select: false },
+  
+  isVerified: { type: Boolean, default: false },
+
   avatar: String,
   joinedDate: String,
   bio: String,
@@ -109,7 +117,8 @@ reportSchema.set('toJSON', {
 });
 
 const notificationSchema = new mongoose.Schema({
-  userId: { type: String, index: true }, // Index for fast retrieval
+  id: String,
+  userId: { type: String, index: true }, 
   type: { type: String, enum: ['info', 'success', 'error', 'warning'], default: 'info' },
   title: String,
   message: String,
@@ -130,4 +139,3 @@ export const RecipeModel = mongoose.model('Recipe', recipeSchema);
 export const UserModel = mongoose.model('User', userSchema);
 export const ReportModel = mongoose.model('Report', reportSchema);
 export const NotificationModel = mongoose.model('Notification', notificationSchema);
-

@@ -235,7 +235,7 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
       } finally {
         setTimeout(() => {
             setProcessingVotes(prev => { const next = new Set(prev); next.delete(commentId); return next; });
-        }, 800);
+        }, 800); // 800ms debounce
       }
   };
 

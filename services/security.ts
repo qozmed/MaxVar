@@ -7,15 +7,17 @@ const BAD_WORDS = [
 export const SecurityService = {
   /**
    * Basic XSS Sanitization
-   * Only escape critical HTML tags. React handles most text escaping automatically.
-   * We do NOT want to escape / or ' or " excessively as it breaks readability.
+   * Relaxed rule: Only remove dangerously specific tags to allow normal text flow.
+   * React automatically escapes content in {} bindings, so full HTML encoding isn't needed.
    */
   sanitize: (input: string): string => {
     if (!input) return '';
-    // Only escape < and > to prevent injection of script tags or HTML structure
+    // Just remove outright dangerous tags, leave text and punctuation alone.
     return input
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+        .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, "")
+        .replace(/<iframe\b[^>]*>([\s\S]*?)<\/iframe>/gim, "")
+        .replace(/<object\b[^>]*>([\s\S]*?)<\/object>/gim, "")
+        .replace(/javascript:/gim, "");
   },
 
   /**
