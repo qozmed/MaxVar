@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Clock, Activity, Users, Camera, Send, ChevronLeft, ChevronRight, Star, Heart, ThumbsUp, ThumbsDown, Plus, CheckCircle, Clock3, User as UserIcon, Trash2, AlertTriangle, Loader2, Flag, X, MessageCircle, ShieldAlert, Headphones } from 'lucide-react';
+import { ArrowLeft, Clock, Activity, Users, Camera, Send, ChevronLeft, ChevronRight, Star, Heart, ThumbsUp, ThumbsDown, Plus, CheckCircle, Clock3, User as UserIcon, Trash2, AlertTriangle, Loader2, Flag, X, MessageCircle, ShieldAlert, Headphones, UtensilsCrossed } from 'lucide-react';
 import { Recipe, Comment, User } from '../types';
 import { SecurityService } from '../services/security';
 import { processImage } from '../services/imageOptimizer';
@@ -312,10 +312,24 @@ const RecipeDetail: React.FC<RecipeDetailProps> = ({ recipe, onBack, currentUser
 
   if (!recipe || !recipe.parsed_content) {
       return (
-          <div className="flex flex-col items-center justify-center py-20 animate-fade-in">
-              <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Ошибка данных</h2>
-              <button onClick={onBack} className="px-4 py-2 mt-4 bg-gray-200 dark:bg-gray-800 rounded-lg text-gray-700 dark:text-gray-300">Вернуться назад</button>
+          <div className="flex flex-col items-center justify-center min-h-[60vh] animate-fade-in px-4 text-center">
+              <div className="glass-panel p-8 sm:p-12 rounded-3xl max-w-lg w-full flex flex-col items-center dark:bg-gray-900/50">
+                  <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-full mb-6">
+                      <UtensilsCrossed className="w-12 h-12 text-gray-400 dark:text-gray-500" />
+                  </div>
+                  <h2 className="font-serif text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3">
+                      Упс!
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-300 mb-8 leading-relaxed">
+                      Этот рецепт еще не успели добавить, либо он уже был удален...
+                  </p>
+                  <button 
+                      onClick={onBack} 
+                      className="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-95 flex items-center gap-2"
+                  >
+                      <ArrowLeft className="w-4 h-4" /> Вернуться назад
+                  </button>
+              </div>
           </div>
       );
   }
