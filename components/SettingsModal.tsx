@@ -66,7 +66,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, currentU
           if (res.success && res.qrCode) {
               setQrCodeUrl(res.qrCode);
           } else {
-              setSecurityStatus({ msg: "Ошибка генерации кода", type: 'error' });
+              setSecurityStatus({ msg: res.message || "Ошибка генерации кода", type: 'error' });
           }
       } catch (e) { setSecurityStatus({ msg: "Ошибка сети", type: 'error' }); }
       finally { setIsProcessingSec(false); }
@@ -182,46 +182,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, currentU
                       </div>
                   )}
 
-                  {!is2FAEnabled && !qrCodeUrl && (
-                      <button 
-                          onClick={handleSetup2FA} 
-                          disabled={isProcessingSec}
-                          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-2"
-                      >
-                          {isProcessingSec ? <Loader2 className="animate-spin" /> : <QrCode className="w-5 h-5" />} Включить 2FA
-                      </button>
-                  )}
-
-                  {!is2FAEnabled && qrCodeUrl && (
-                      <div className="bg-gray-50 dark:bg-white/5 p-6 rounded-xl border border-gray-200 dark:border-gray-700 text-center animate-slide-up">
-                           <p className="text-sm font-bold mb-4 dark:text-white">1. Сканируйте код в Google Authenticator</p>
-                           <div className="bg-white p-2 rounded-lg inline-block shadow-sm mb-4">
-                               <img src={qrCodeUrl} className="w-40 h-40" alt="QR Code" />
-                           </div>
-                           <p className="text-sm font-bold mb-2 dark:text-white">2. Введите код из приложения</p>
-                           <div className="flex gap-2">
-                               <input 
-                                    type="text" 
-                                    maxLength={6} 
-                                    value={verifyCode} 
-                                    onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g,''))} 
-                                    placeholder="000 000" 
-                                    className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-center font-mono tracking-widest text-lg" 
-                               />
-                               <button onClick={handleConfirm2FA} disabled={!verifyCode || isProcessingSec} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-50">
-                                   OK
-                               </button>
-                           </div>
-                           <button onClick={() => setQrCodeUrl(null)} className="text-xs text-gray-500 mt-4 hover:underline">Отмена</button>
-                      </div>
-                  )}
-
-                  {is2FAEnabled && (
+                  {is2FAEnabled ? (
                       <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800 p-4 rounded-xl">
                           <div className="flex items-center gap-3 mb-4">
                               <CheckCircle className="w-5 h-5 text-emerald-600" />
                               <span className="font-bold text-emerald-800 dark:text-emerald-300 text-sm">Активно</span>
                           </div>
+                          <p className="text-xs text-emerald-700 dark:text-emerald-400 mb-4">Для пересоздания кодов сначала отключите защиту.</p>
                           <button 
                              onClick={handleDisable2FA}
                              disabled={isProcessingSec}
@@ -230,6 +197,40 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, currentU
                              {isProcessingSec ? '...' : 'Отключить защиту'}
                           </button>
                       </div>
+                  ) : (
+                      <>
+                        {!qrCodeUrl ? (
+                            <button 
+                                onClick={handleSetup2FA} 
+                                disabled={isProcessingSec}
+                                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-2"
+                            >
+                                {isProcessingSec ? <Loader2 className="animate-spin" /> : <QrCode className="w-5 h-5" />} Включить 2FA
+                            </button>
+                        ) : (
+                            <div className="bg-gray-50 dark:bg-white/5 p-6 rounded-xl border border-gray-200 dark:border-gray-700 text-center animate-slide-up">
+                                <p className="text-sm font-bold mb-4 dark:text-white">1. Сканируйте код в Google Authenticator</p>
+                                <div className="bg-white p-2 rounded-lg inline-block shadow-sm mb-4">
+                                    <img src={qrCodeUrl} className="w-40 h-40" alt="QR Code" />
+                                </div>
+                                <p className="text-sm font-bold mb-2 dark:text-white">2. Введите код из приложения</p>
+                                <div className="flex gap-2">
+                                    <input 
+                                            type="text" 
+                                            maxLength={6} 
+                                            value={verifyCode} 
+                                            onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g,''))} 
+                                            placeholder="000 000" 
+                                            className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-center font-mono tracking-widest text-lg" 
+                                    />
+                                    <button onClick={handleConfirm2FA} disabled={!verifyCode || isProcessingSec} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-50">
+                                        OK
+                                    </button>
+                                </div>
+                                <button onClick={() => setQrCodeUrl(null)} className="text-xs text-gray-500 mt-4 hover:underline">Отмена</button>
+                            </div>
+                        )}
+                      </>
                   )}
               </section>
           )}
@@ -249,4 +250,5 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, currentU
 };
 
 export default SettingsModal;
+
 

@@ -105,7 +105,10 @@
     reason: String,
     details: String,
     status: { type: String, enum: ['open', 'resolved'], default: 'open' },
-    resolvedAt: Date
+    resolvedAt: Date,
+    // Explicitly define createdAt to add TTL index. 
+    // 172800 seconds = 48 hours. MongoDB background thread checks this periodically.
+    createdAt: { type: Date, default: Date.now, expires: 172800 } 
   }, { timestamps: true });
 
   reportSchema.set('toJSON', {

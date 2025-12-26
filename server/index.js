@@ -84,6 +84,38 @@ const generateUniqueNumericId = async () => {
     return id;
 };
 
+// --- AUTOMATED CLEANUP TASK (Reports > 48 hours) ---
+const cleanupOldReports = async () => {
+    const cutoffDate = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48 hours ago
+    
+    // 1. Clean Memory (for Offline Mode & Cache Consistency)
+    const initialLen = memReports.length;
+    memReports = memReports.filter(report => {
+        const reportDate = new Date(report.createdAt);
+        return reportDate > cutoffDate;
+    });
+    
+    if (initialLen > memReports.length) {
+        console.log(`🧹 [Auto-Cleanup] Removed ${initialLen - memReports.length} old reports from memory.`);
+    }
+
+    // 2. Clean MongoDB (Explicitly, to ensure sync if TTL is slow)
+    if (isMongoConnected) {
+        try {
+            const result = await ReportModel.deleteMany({ createdAt: { $lt: cutoffDate } });
+            if (result.deletedCount > 0) {
+                 console.log(`🧹 [Auto-Cleanup] Removed ${result.deletedCount} old reports from MongoDB.`);
+            }
+        } catch (e) {
+            console.error("⚠️ Error cleaning up old reports from DB:", e.message);
+        }
+    }
+};
+
+// Run cleanup every hour
+setInterval(cleanupOldReports, 60 * 60 * 1000);
+
+
 // --- DB CONNECTION ---
 const connectDB = async () => {
   try {
@@ -120,7 +152,10 @@ const connectDB = async () => {
         const notifs = await NotificationModel.find().lean();
         memNotifications = notifs.map(n => ({ ...n, id: n.id || n._id.toString() }));
         
-        console.log(`📊 Loaded ${memRecipes.length} recipes and ${memUsers.length} users from DB`);
+        console.log(`📊 Loaded ${memRecipes.length} recipes, ${memReports.length} reports from DB`);
+        
+        // Run cleanup immediately on startup
+        cleanupOldReports();
 
     } catch (loadErr) {
         console.error("⚠️ Error loading initial data from DB:", loadErr.message);
@@ -129,6 +164,8 @@ const connectDB = async () => {
   } catch (err) {
     console.log('⚠️  MongoDB unreachable. Starting in Offline/Memory Mode.');
     isMongoConnected = false;
+    // Still run cleanup for memory mode
+    cleanupOldReports();
   }
 };
 
@@ -367,11 +404,23 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/2fa/generate', async (req, res) => {
     try {
         const { email } = req.body;
+        
+        // Strict Check: Do not allow generation if already enabled
+        let user;
+        if (isMongoConnected) user = await UserModel.findOne({ email });
+        else user = memUsers.find(u => u.email === email);
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        if (user.is2FAEnabled) {
+             return res.status(400).json({ message: "2FA уже активна. Сначала отключите её." });
+        }
+
         const totpSecret = authenticator.generateSecret();
         const otpauth = authenticator.keyuri(email, 'Gourmet Magazine', totpSecret);
         const qrCodeUrl = await QRCode.toDataURL(otpauth);
 
-        // Store secret temporarily (or update user with inactive 2FA)
+        // Store secret temporarily
         if (isMongoConnected) {
             await UserModel.updateOne({ email }, { totpSecret });
         } else {
@@ -381,6 +430,7 @@ app.post('/api/auth/2fa/generate', async (req, res) => {
 
         res.json({ success: true, qrCode: qrCodeUrl });
     } catch(e) {
+        console.error("2FA Generate Error:", e);
         res.status(500).json({ message: "Ошибка генерации 2FA" });
     }
 });
