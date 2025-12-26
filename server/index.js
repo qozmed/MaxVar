@@ -632,7 +632,16 @@ app.put('/api/reports/:id', async (req, res) => {
         const updates = { status };
         if (status === 'resolved') updates.resolvedAt = new Date();
         memReports[idx] = { ...memReports[idx], ...updates };
-        if (isMongoConnected) await ReportModel.updateOne({ id: id }, updates); 
+        
+        if (isMongoConnected) {
+             // Try updating by custom ID (new records)
+             const result = await ReportModel.updateOne({ id: id }, updates);
+             // Fallback: Try updating by _id (old/legacy records)
+             if (result.matchedCount === 0 && mongoose.Types.ObjectId.isValid(id)) {
+                 await ReportModel.updateOne({ _id: id }, updates);
+             }
+        }
+        
         res.json(memReports[idx]);
         notifyClients('REPORT_UPDATED', memReports[idx]);
     } catch (e) { res.status(500).json({ error: e.message }); }

@@ -99,6 +99,7 @@
   });
 
   const reportSchema = new mongoose.Schema({
+    id: { type: String, index: true }, // Added ID field to ensure persistence
     recipeId: String,
     recipeName: String,
     reporter: String,
