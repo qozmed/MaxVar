@@ -111,78 +111,83 @@ class StorageServiceImpl {
 
   // --- NEW AUTH METHODS ---
   
-  async loginStep1(email: string, password: string): Promise<{ success: boolean; message: string }> {
+  async login(email: string, password: string, code?: string): Promise<{ success: boolean; user?: User; require2FA?: boolean; message: string }> {
       if (this.isOfflineMode) return { success: false, message: "Сервер недоступен" };
       try {
-          const res = await fetch('/api/auth/login-step1', {
+          const res = await fetch('/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, password })
+              body: JSON.stringify({ email, password, code })
           });
           const data = await res.json();
-          return { success: res.ok, message: data.message || "Ошибка входа" };
+          if (res.ok) {
+              if (data.require2FA) {
+                  return { success: false, require2FA: true, message: data.message };
+              }
+              return { success: true, user: data.user, message: "Вход успешен" };
+          }
+          return { success: false, message: data.message || "Ошибка входа" };
       } catch (e) { return { success: false, message: "Ошибка сети" }; }
   }
 
-  async loginStep2(email: string, code: string): Promise<{ success: boolean; user?: User; message: string }> {
+  async register(name: string, email: string, password: string): Promise<{ success: boolean; user?: User; message: string }> {
       if (this.isOfflineMode) return { success: false, message: "Сервер недоступен" };
       try {
-          const res = await fetch('/api/auth/login-step2', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, code })
-          });
-          const data = await res.json();
-          if (res.ok && data.user) return { success: true, user: data.user, message: "Вход успешен" };
-          return { success: false, message: data.message || "Неверный код" };
-      } catch (e) { return { success: false, message: "Ошибка сети" }; }
-  }
-
-  async registerStep1(name: string, email: string, password: string): Promise<{ success: boolean; message: string; qrCode?: string }> {
-      if (this.isOfflineMode) return { success: false, message: "Сервер недоступен" };
-      try {
-          const res = await fetch('/api/auth/register-step1', {
+          const res = await fetch('/api/auth/register', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name, email, password })
           });
           const data = await res.json();
-          // Return QR code if successful
-          return { success: res.ok, message: data.message || "Ошибка регистрации", qrCode: data.qrCode };
+          if (res.ok && data.user) return { success: true, user: data.user, message: "Регистрация успешна" };
+          return { success: false, message: data.message || "Ошибка регистрации" };
       } catch (e) { return { success: false, message: "Ошибка сети" }; }
   }
 
-  async registerStep2(email: string, code: string): Promise<{ success: boolean; user?: User; message: string }> {
-      if (this.isOfflineMode) return { success: false, message: "Сервер недоступен" };
+  // --- 2FA MANAGEMENT ---
+  async generate2FA(email: string): Promise<{ success: boolean; qrCode?: string; message?: string }> {
+      if (this.isOfflineMode) return { success: false };
       try {
-          const res = await fetch('/api/auth/register-step2', {
+          const res = await fetch('/api/auth/2fa/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email })
+          });
+          return await res.json();
+      } catch(e) { return { success: false }; }
+  }
+
+  async enable2FA(email: string, code: string): Promise<{ success: boolean; user?: User; message?: string }> {
+      if (this.isOfflineMode) return { success: false };
+      try {
+          const res = await fetch('/api/auth/2fa/enable', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email, code })
           });
-          const data = await res.json();
-          if (res.ok && data.user) return { success: true, user: data.user, message: "Регистрация успешна" };
-          return { success: false, message: data.message || "Неверный код" };
-      } catch (e) { return { success: false, message: "Ошибка сети" }; }
+          return await res.json();
+      } catch(e) { return { success: false }; }
   }
+
+  async disable2FA(email: string): Promise<{ success: boolean; user?: User; message?: string }> {
+      if (this.isOfflineMode) return { success: false };
+      try {
+          const res = await fetch('/api/auth/2fa/disable', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email })
+          });
+          return await res.json();
+      } catch(e) { return { success: false }; }
+  }
+
 
   // --- EXISTING METHODS (Legacy support if needed, generally replaced by above) ---
-
-  async registerUser(newUser: User): Promise<{ success: boolean; message: string; user?: User }> {
-      return this.registerStep2(newUser.email, 'LEGACY'); // Not used in new flow
-  }
-
-  async loginUser(email: string, password?: string, method: 'password' | 'code' = 'password'): Promise<{ success: boolean; user?: User; message: string }> {
-      return { success: false, message: "Используйте новый метод входа" };
-  }
-
-  async sendVerificationCode(email: string, type: 'register' | 'login'): Promise<{ success: boolean; message: string; devCode?: string }> {
-       return { success: false, message: "Deprecated" };
-  }
-
-  async verifyCode(email: string, code: string, type: 'register' | 'login'): Promise<{ success: boolean; message?: string }> {
-       return { success: false, message: "Deprecated" };
-  }
+  // ... (Kept for compatibility with other components if they call them directly, though updated logic preferred) ...
+  async loginStep1() { return {success: false, message: "Deprecated"}; }
+  async loginStep2() { return {success: false, message: "Deprecated"}; }
+  async registerStep1() { return {success: false, message: "Deprecated"}; }
+  async registerStep2() { return {success: false, message: "Deprecated"}; }
 
   async saveUser(user: User | null): Promise<void> {
       this.currentUserCache = user;

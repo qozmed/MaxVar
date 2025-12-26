@@ -31,9 +31,6 @@ let memRecipes = [];
 let memReports = [];
 let memNotifications = [];
 
-// For pending registrations in memory mode
-let memPendingRegistrations = new Map(); 
-
 let clients = [];
 
 // --- HELPER: TIME PARSER ---
@@ -258,144 +255,63 @@ app.get('/api/recipes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: "Server Error" }); }
 });
 
-// --- NEW AUTH FLOW (2-STEP TOTP) ---
+// --- NEW AUTH FLOW (OPTIONAL 2FA) ---
 
-// 1. REGISTER STEP 1: Generate TOTP Secret & QR Code
-app.post('/api/auth/register-step1', async (req, res) => {
+// 1. REGISTER: Single step. 2FA is now optional in settings.
+app.post('/api/auth/register', async (req, res) => {
     try {
         const { name, email, password } = req.body;
         const normalizedEmail = email.toLowerCase().trim();
 
-        // Check existing verified user
         const existing = memUsers.find(u => u.email === normalizedEmail);
-        if (existing && existing.isVerified) {
+        if (existing) {
             return res.status(400).json({ message: "Email уже зарегистрирован" });
         }
 
         const { hash, salt } = hashPassword(password);
+        const numericId = await generateUniqueNumericId();
+
+        const newUser = {
+            numericId,
+            name,
+            email: normalizedEmail,
+            password: hash,
+            salt,
+            joinedDate: new Date().toLocaleDateString('ru-RU'),
+            role: 'user',
+            isBanned: false,
+            is2FAEnabled: false, // Default to false
+            favorites: [],
+            ratedRecipeIds: [],
+            votedComments: {},
+            settings: { showEmail: false, showFavorites: true, newsletter: true, dietaryPreferences: [] }
+        };
+
+        if (isMongoConnected) {
+             const doc = new UserModel(newUser);
+             await doc.save();
+        }
+
+        // Clean for memory & response
+        const safeUser = { ...newUser };
+        delete safeUser.password;
+        delete safeUser.salt;
+
+        memUsers.push(safeUser);
         
-        // Generate TOTP Secret
-        const totpSecret = authenticator.generateSecret();
-        // Generate QR Code URL (otpauth://...)
-        const otpauth = authenticator.keyuri(normalizedEmail, 'Gourmet Magazine', totpSecret);
-        const qrCodeUrl = await QRCode.toDataURL(otpauth);
-
-        // Save to Pending State (DB or Memory)
-        if (isMongoConnected) {
-            await UserModel.findOneAndUpdate(
-                { email: normalizedEmail },
-                { 
-                    name, 
-                    password: hash, 
-                    salt, 
-                    totpSecret, 
-                    isVerified: false,
-                    $setOnInsert: { 
-                        numericId: await generateUniqueNumericId(),
-                        joinedDate: new Date().toLocaleDateString('ru-RU'),
-                        role: 'user',
-                        favorites: [],
-                        settings: { showEmail: false, showFavorites: true, newsletter: true, dietaryPreferences: [] }
-                    }
-                },
-                { upsert: true, new: true, setDefaultsOnInsert: true }
-            );
-        } else {
-            // Memory Mode
-            memPendingRegistrations.set(normalizedEmail, {
-                name,
-                email: normalizedEmail,
-                password: hash,
-                salt,
-                totpSecret
-            });
-        }
-
-        res.json({ success: true, message: "Сканируйте QR-код", qrCode: qrCodeUrl });
+        res.json({ success: true, user: safeUser, message: "Регистрация успешна" });
+        notifyClients('USER_UPDATED', safeUser);
 
     } catch (e) {
-        console.error("Reg Step 1 Error:", e);
+        console.error("Register Error:", e);
         res.status(500).json({ message: "Ошибка сервера" });
     }
 });
 
-// 2. REGISTER STEP 2: Verify TOTP Code -> Finalize
-app.post('/api/auth/register-step2', async (req, res) => {
+// 2. LOGIN: Check pass. If 2FA on, require code. If off, log in.
+app.post('/api/auth/login', async (req, res) => {
     try {
-        const { email, code } = req.body;
-        const normalizedEmail = email.toLowerCase().trim();
-
-        let userSecret = '';
-        let pendingUser = null;
-        let isDbUser = false;
-
-        if (isMongoConnected) {
-            const user = await UserModel.findOne({ email: normalizedEmail }).select('+totpSecret');
-            if (user) {
-                userSecret = user.totpSecret;
-                pendingUser = user;
-                isDbUser = true;
-            }
-        } else {
-            pendingUser = memPendingRegistrations.get(normalizedEmail);
-            if (pendingUser) userSecret = pendingUser.totpSecret;
-        }
-
-        if (!userSecret) return res.status(400).json({ message: "Сессия истекла" });
-
-        // Verify TOTP
-        const isValid = authenticator.check(code, userSecret);
-        if (!isValid) return res.status(400).json({ message: "Неверный код из приложения" });
-
-        // Finalize Registration
-        let finalUser;
-
-        if (isDbUser && pendingUser) {
-            pendingUser.isVerified = true;
-            await pendingUser.save();
-            
-            // Update memory cache
-            const idx = memUsers.findIndex(u => u.email === normalizedEmail);
-            const plainUser = pendingUser.toObject();
-            delete plainUser.password;
-            delete plainUser.salt;
-            delete plainUser.totpSecret;
-            
-            if (idx > -1) memUsers[idx] = plainUser;
-            else memUsers.push(plainUser);
-            finalUser = plainUser;
-        } else if (pendingUser) {
-            const numericId = await generateUniqueNumericId();
-            finalUser = {
-                ...pendingUser,
-                numericId,
-                joinedDate: new Date().toLocaleDateString('ru-RU'),
-                isVerified: true,
-                role: 'user',
-                favorites: [],
-                ratedRecipeIds: [],
-                votedComments: {},
-                settings: { showEmail: false, showFavorites: true, newsletter: true, dietaryPreferences: [] }
-            };
-            delete finalUser.totpSecret; 
-            
-            memUsers.push(finalUser);
-            memPendingRegistrations.delete(normalizedEmail);
-        }
-
-        res.json({ success: true, user: finalUser });
-        notifyClients('USER_UPDATED', finalUser);
-
-    } catch (e) {
-        console.error("Reg Step 2 Error:", e);
-        res.status(500).json({ message: "Ошибка сервера" });
-    }
-});
-
-// 3. LOGIN STEP 1: Verify Creds -> Request TOTP
-app.post('/api/auth/login-step1', async (req, res) => {
-    try {
-        const { email, password } = req.body;
+        const { email, password, code } = req.body;
         const normalizedEmail = email.toLowerCase().trim();
         
         let user;
@@ -413,46 +329,25 @@ app.post('/api/auth/login-step1', async (req, res) => {
         if (user.salt) {
             isPassValid = verifyPassword(password, user.password, user.salt);
         } else if (user.password === password) {
-            isPassValid = true; // Legacy support
+            isPassValid = true; // Legacy
         }
 
         if (!isPassValid) return res.status(401).json({ message: "Неверный пароль" });
 
-        // Check if user has TOTP setup (legacy users might not)
-        if (!user.totpSecret) {
-             return res.status(400).json({ message: "2FA не настроена. Пожалуйста, зарегистрируйтесь заново." });
+        // Check 2FA
+        if (user.is2FAEnabled) {
+            if (!code) {
+                // Signal client to show code input
+                return res.json({ success: false, require2FA: true, message: "Введите код 2FA" });
+            }
+            
+            // Verify Code
+            if (!user.totpSecret) return res.status(400).json({ message: "Ошибка конфигурации 2FA" });
+            const isValid = authenticator.check(code, user.totpSecret);
+            if (!isValid) return res.status(400).json({ message: "Неверный код" });
         }
 
-        res.json({ success: true, message: "Введите код Authenticator" });
-
-    } catch (e) {
-        console.error("Login Step 1 Error:", e);
-        res.status(500).json({ message: "Ошибка сервера" });
-    }
-});
-
-// 4. LOGIN STEP 2: Verify TOTP -> Login
-app.post('/api/auth/login-step2', async (req, res) => {
-    try {
-        const { email, code } = req.body;
-        const normalizedEmail = email.toLowerCase().trim();
-
-        let userSecret = '';
-        let user = null;
-
-        if (isMongoConnected) {
-            user = await UserModel.findOne({ email: normalizedEmail }).select('+totpSecret');
-            if (user) userSecret = user.totpSecret;
-        } else {
-            user = memUsers.find(u => u.email === normalizedEmail);
-            if (user) userSecret = user.totpSecret; 
-        }
-
-        if (!user || !userSecret) return res.status(400).json({ message: "Ошибка авторизации" });
-
-        const isValid = authenticator.check(code, userSecret);
-        if (!isValid) return res.status(400).json({ message: "Неверный код" });
-
+        // Success
         const safeUser = isMongoConnected ? user.toObject() : { ...user };
         delete safeUser.password;
         delete safeUser.salt;
@@ -461,8 +356,84 @@ app.post('/api/auth/login-step2', async (req, res) => {
         res.json({ success: true, user: safeUser });
 
     } catch (e) {
-        console.error("Login Step 2 Error:", e);
+        console.error("Login Error:", e);
         res.status(500).json({ message: "Ошибка сервера" });
+    }
+});
+
+// --- 2FA MANAGEMENT ENDPOINTS ---
+
+// Generate Secret & QR (User must be logged in on client side to call this, logic handled by passing email)
+app.post('/api/auth/2fa/generate', async (req, res) => {
+    try {
+        const { email } = req.body;
+        const totpSecret = authenticator.generateSecret();
+        const otpauth = authenticator.keyuri(email, 'Gourmet Magazine', totpSecret);
+        const qrCodeUrl = await QRCode.toDataURL(otpauth);
+
+        // Store secret temporarily (or update user with inactive 2FA)
+        if (isMongoConnected) {
+            await UserModel.updateOne({ email }, { totpSecret });
+        } else {
+            const idx = memUsers.findIndex(u => u.email === email);
+            if (idx > -1) memUsers[idx].totpSecret = totpSecret;
+        }
+
+        res.json({ success: true, qrCode: qrCodeUrl });
+    } catch(e) {
+        res.status(500).json({ message: "Ошибка генерации 2FA" });
+    }
+});
+
+app.post('/api/auth/2fa/enable', async (req, res) => {
+    try {
+        const { email, code } = req.body;
+        
+        let user;
+        if (isMongoConnected) user = await UserModel.findOne({ email }).select('+totpSecret');
+        else user = memUsers.find(u => u.email === email);
+
+        if (!user || !user.totpSecret) return res.status(400).json({ message: "Сначала сгенерируйте код" });
+
+        const isValid = authenticator.check(code, user.totpSecret);
+        if (!isValid) return res.status(400).json({ message: "Неверный код" });
+
+        if (isMongoConnected) {
+            user.is2FAEnabled = true;
+            await user.save();
+        } else {
+            const idx = memUsers.findIndex(u => u.email === email);
+            memUsers[idx].is2FAEnabled = true;
+        }
+        
+        // Return updated user to client
+        const safeUser = isMongoConnected ? user.toObject() : { ...user };
+        delete safeUser.password; delete safeUser.salt; delete safeUser.totpSecret;
+        
+        res.json({ success: true, user: safeUser });
+    } catch(e) {
+        res.status(500).json({ message: "Ошибка включения 2FA" });
+    }
+});
+
+app.post('/api/auth/2fa/disable', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (isMongoConnected) {
+            const user = await UserModel.findOneAndUpdate({ email }, { is2FAEnabled: false }, { new: true });
+             const safeUser = user.toObject();
+             delete safeUser.password; delete safeUser.salt; delete safeUser.totpSecret;
+             res.json({ success: true, user: safeUser });
+        } else {
+            const idx = memUsers.findIndex(u => u.email === email);
+            if (idx > -1) {
+                memUsers[idx].is2FAEnabled = false;
+                res.json({ success: true, user: memUsers[idx] });
+            } else res.status(404).json({ message: "User not found" });
+        }
+    } catch(e) {
+         res.status(500).json({ message: "Ошибка отключения 2FA" });
     }
 });
 
@@ -533,9 +504,7 @@ app.post('/api/notifications', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- NEW NOTIFICATION ENDPOINTS (ROBUST & SAFE) ---
-
-// Mark single notification as read
+// --- ROBUST NOTIFICATION ENDPOINTS ---
 app.put('/api/notifications/:id/read', async (req, res) => {
     try {
         const { id } = req.params;
@@ -543,40 +512,24 @@ app.put('/api/notifications/:id/read', async (req, res) => {
         if (idx > -1) {
             memNotifications[idx].isRead = true;
         }
-        
         if (isMongoConnected) {
-            // Try updating by custom id first, fallback to _id if needed
             let result = await NotificationModel.updateOne({ id }, { isRead: true });
             if (result.matchedCount === 0) {
-                 try { 
-                     // Try by _id just in case
-                     if (mongoose.Types.ObjectId.isValid(id)) {
-                        await NotificationModel.findByIdAndUpdate(id, { isRead: true }); 
-                     }
-                 } catch(e) {}
+                 try { if (mongoose.Types.ObjectId.isValid(id)) await NotificationModel.findByIdAndUpdate(id, { isRead: true }); } catch(e) {}
             }
         }
         res.json({ success: true });
     } catch (e) {
         console.error("Error marking notif read:", e);
-        res.json({ success: true }); // Fallback success to not break UI
+        res.json({ success: true }); 
     }
 });
 
-// Mark ALL user notifications as read
 app.put('/api/notifications/:userId/read-all', async (req, res) => {
     try {
         const { userId } = req.params;
-        
-        // Update memory
-        memNotifications.forEach(n => {
-            if (n.userId === userId) n.isRead = true;
-        });
-
-        // Update DB
-        if (isMongoConnected) {
-            await NotificationModel.updateMany({ userId }, { isRead: true });
-        }
+        memNotifications.forEach(n => { if (n.userId === userId) n.isRead = true; });
+        if (isMongoConnected) await NotificationModel.updateMany({ userId }, { isRead: true });
         res.json({ success: true });
     } catch (e) {
         console.error("Error marking all read:", e);
@@ -584,26 +537,17 @@ app.put('/api/notifications/:userId/read-all', async (req, res) => {
     }
 });
 
-// Delete all READ notifications for user
 app.delete('/api/notifications/:userId/read', async (req, res) => {
     try {
         const { userId } = req.params;
-        
-        // Keep unread ones OR ones belonging to other users
-        // This is safe because memNotifications is in-memory
         memNotifications = memNotifications.filter(n => !(n.userId === userId && n.isRead));
-        
-        if (isMongoConnected) {
-            await NotificationModel.deleteMany({ userId, isRead: true });
-        }
-        
+        if (isMongoConnected) await NotificationModel.deleteMany({ userId, isRead: true });
         res.json({ success: true });
     } catch (e) {
         console.error("Error deleting notifications:", e);
-        res.json({ success: true }); // Don't crash UI on DB error
+        res.json({ success: true }); 
     }
 });
-// -------------------------------------------------------------------
 
 app.post('/api/notifications/broadcast', async (req, res) => {
     const { title, message, type } = req.body;
@@ -657,11 +601,9 @@ if (fs.existsSync(distPath)) {
   app.get('/', (req, res) => res.send('Gourmet API Active (Dev Mode)'));
 }
 
-// Port 5008 (changed from 5007 to avoid zombies)
 const PORT = process.env.PORT || 5008;
 const server = app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
-// Graceful shutdown
 const shutdown = (signal) => {
   console.log(`\n🛑 Received ${signal}. Stopping server...`);
   server.close(() => {
@@ -677,12 +619,5 @@ const shutdown = (signal) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Prevent silent crashes
-process.on('uncaughtException', (err) => {
-  console.error('💥 Uncaught Exception:', err);
-  // Optional: Shutdown if critical, but for dev we often want to stay up
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-})
+process.on('uncaughtException', (err) => console.error('💥 Uncaught Exception:', err));
+process.on('unhandledRejection', (reason, promise) => console.error('💥 Unhandled Rejection:', reason));

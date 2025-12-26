@@ -62,6 +62,7 @@ export interface User {
   votedComments: Record<string, 'like' | 'dislike'>;
   role: 'user' | 'admin' | 'moderator'; // Added moderator
   isBanned: boolean;
+  is2FAEnabled: boolean; // NEW: Flag for optional 2FA
   settings?: UserSettings;
 }
 
