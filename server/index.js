@@ -19,6 +19,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+app.set('trust proxy', true); // Enable IP capture behind proxies
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/gourmet_db';
 
@@ -32,6 +33,8 @@ let memReports = [];
 let memNotifications = [];
 
 let clients = [];
+// Map to track active connections per user: email -> connectionCount
+const onlineUsers = new Map();
 
 // --- HELPER: TIME PARSER ---
 const parseCookingTime = (timeStr) => {
@@ -60,6 +63,14 @@ const hashPassword = (password, salt) => {
 const verifyPassword = (inputPassword, storedHash, storedSalt) => {
     const hash = crypto.pbkdf2Sync(inputPassword, storedSalt, 1000, 64, 'sha512').toString('hex');
     return hash === storedHash;
+};
+
+const getClientIp = (req) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+        return forwarded.split(',')[0].trim();
+    }
+    return req.connection.remoteAddress || req.socket.remoteAddress || req.ip;
 };
 
 // --- ROBUST UNIQUE ID GENERATOR ---
@@ -215,14 +226,39 @@ app.get('/api/events', (req, res) => {
   const newClient = { id: clientId, res };
   clients.push(newClient);
   
+  // Track Online Status
+  const userEmail = req.query.email;
+  if (userEmail) {
+      const currentCount = onlineUsers.get(userEmail) || 0;
+      onlineUsers.set(userEmail, currentCount + 1);
+  }
+
   // Send initial ping
   try {
       res.write(`data: ${JSON.stringify({ type: 'CONNECTED', payload: { clientId } })}\n\n`);
   } catch(e) { console.error("Initial SSE write failed"); }
 
   // Clean up on connection close (Page Refresh triggers this)
-  req.on('close', () => {
+  req.on('close', async () => {
     clients = clients.filter(client => client.id !== clientId);
+    
+    // Update Online Status
+    if (userEmail) {
+        const count = onlineUsers.get(userEmail) || 0;
+        if (count <= 1) {
+            onlineUsers.delete(userEmail);
+            // Update last seen in DB
+            const lastSeen = new Date();
+            if (isMongoConnected) {
+                await UserModel.updateOne({ email: userEmail }, { lastSeen });
+            }
+            // Update memory
+            const idx = memUsers.findIndex(u => u.email === userEmail);
+            if (idx > -1) memUsers[idx].lastSeen = lastSeen;
+        } else {
+            onlineUsers.set(userEmail, count - 1);
+        }
+    }
   });
   
   // Handle errors specifically on this response object
@@ -299,6 +335,7 @@ app.post('/api/auth/register', async (req, res) => {
     try {
         const { name, email, password } = req.body;
         const normalizedEmail = email.toLowerCase().trim();
+        const clientIp = getClientIp(req);
 
         const existing = memUsers.find(u => u.email === normalizedEmail);
         if (existing) {
@@ -321,7 +358,9 @@ app.post('/api/auth/register', async (req, res) => {
             favorites: [],
             ratedRecipeIds: [],
             votedComments: {},
-            settings: { showEmail: false, showFavorites: true, newsletter: true, dietaryPreferences: [] }
+            settings: { showEmail: false, showFavorites: true, newsletter: true, dietaryPreferences: [] },
+            lastLoginIp: clientIp,
+            lastSeen: new Date()
         };
 
         if (isMongoConnected) {
@@ -350,6 +389,7 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password, code } = req.body;
         const normalizedEmail = email.toLowerCase().trim();
+        const clientIp = getClientIp(req);
         
         let user;
         if (isMongoConnected) {
@@ -382,6 +422,19 @@ app.post('/api/auth/login', async (req, res) => {
             if (!user.totpSecret) return res.status(400).json({ message: "Ошибка конфигурации 2FA" });
             const isValid = authenticator.check(code, user.totpSecret);
             if (!isValid) return res.status(400).json({ message: "Неверный код" });
+        }
+
+        // Update IP and Last Seen
+        if (isMongoConnected) {
+             user.lastLoginIp = clientIp;
+             user.lastSeen = new Date();
+             await user.save();
+        } else {
+             const idx = memUsers.findIndex(u => u.email === normalizedEmail);
+             if (idx > -1) {
+                 memUsers[idx].lastLoginIp = clientIp;
+                 memUsers[idx].lastSeen = new Date();
+             }
         }
 
         // Success
@@ -489,7 +542,16 @@ app.post('/api/auth/2fa/disable', async (req, res) => {
 
 // --- API ROUTES CONTINUED ---
 
-app.get('/api/users', (req, res) => res.json(memUsers.map(u => { const {password, salt, totpSecret, ...rest} = u; return rest; })));
+app.get('/api/users', (req, res) => {
+    const safeUsers = memUsers.map(u => { 
+        const {password, salt, totpSecret, ...rest} = u; 
+        return {
+            ...rest,
+            isOnline: onlineUsers.has(u.email)
+        }; 
+    });
+    res.json(safeUsers);
+});
 
 app.post('/api/recipes', async (req, res) => {
   try {
@@ -616,7 +678,12 @@ app.post('/api/notifications/broadcast', async (req, res) => {
 app.get('/api/reports', (req, res) => res.json(memReports));
 app.post('/api/reports', async (req, res) => {
     try {
-        const rep = { ...req.body, id: Date.now().toString() + Math.random().toString(36).substr(2, 5), createdAt: new Date().toISOString() };
+        const rep = { 
+            status: 'open', // Fix: Explicitly set default status for memory storage
+            ...req.body, 
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 5), 
+            createdAt: new Date().toISOString() 
+        };
         memReports.unshift(rep);
         if (isMongoConnected) { const doc = new ReportModel(rep); await doc.save(); }
         res.json(rep);

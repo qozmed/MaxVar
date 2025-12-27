@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Recipe, RawRecipeImport, Report, RecipeImage } from '../types';
 import { StorageService } from '../services/storage';
-import { ShieldAlert, Check, X, Search, Filter, FileJson, Database, Trash2, Loader2, ExternalLink, CheckCircle, LogOut, Radio, Send } from 'lucide-react';
+import { ShieldAlert, Check, X, Search, Filter, FileJson, Database, Trash2, Loader2, ExternalLink, CheckCircle, LogOut, Radio, Send, Globe, Clock } from 'lucide-react';
 import { useModal } from './ModalProvider';
 
 interface AdminPanelProps {
@@ -453,11 +453,42 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onRecipeSe
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[800px]">
-                        <thead className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs uppercase"><tr><th className="px-6 py-4">Пользователь</th><th className="px-6 py-4">Роль</th><th className="px-6 py-4">Статус</th><th className="px-6 py-4 text-right">Действия</th></tr></thead>
+                        <thead className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs uppercase">
+                            <tr>
+                                <th className="px-6 py-4">Пользователь</th>
+                                <th className="px-6 py-4">Активность</th>
+                                <th className="px-6 py-4">Последний IP</th>
+                                <th className="px-6 py-4">Роль</th>
+                                <th className="px-6 py-4">Статус</th>
+                                <th className="px-6 py-4 text-right">Действия</th>
+                            </tr>
+                        </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredUsers.map(user => (
                                 <tr key={user.email} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{user.name}<div className="text-xs text-gray-400">{user.email}</div></td>
+                                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
+                                        {user.name}
+                                        <div className="text-xs text-gray-400">{user.email}</div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        {user.isOnline ? (
+                                            <div className="flex items-center gap-2 text-emerald-600 font-bold text-xs">
+                                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                                                Сейчас на сайте
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-2 text-gray-500 text-xs">
+                                                <Clock className="w-3 h-3" />
+                                                {user.lastSeen ? `Был ${new Date(user.lastSeen).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} ${new Date(user.lastSeen).toLocaleDateString()}` : 'Неизвестно'}
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400 text-xs font-mono">
+                                            <Globe className="w-3 h-3" />
+                                            {user.lastLoginIp || '-'}
+                                        </div>
+                                    </td>
                                     <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${user.role === 'admin' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300' : user.role === 'moderator' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}`}>{user.role}</span></td>
                                     <td className="px-6 py-4">{user.isBanned ? <span className="text-red-600 font-bold text-xs">Banned</span> : <span className="text-emerald-600 font-bold text-xs">Active</span>}</td>
                                     <td className="px-6 py-4 text-right">{user.role !== 'admin' && <button onClick={() => handleBanUser(user.email, user.isBanned)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${user.isBanned ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}>{user.isBanned ? 'Разблокировать' : 'Заблокировать'}</button>}</td>

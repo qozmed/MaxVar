@@ -95,7 +95,10 @@
       showFavorites: { type: Boolean, default: true },
       newsletter: Boolean,
       dietaryPreferences: [String]
-    }
+    },
+    // Tracking
+    lastLoginIp: String,
+    lastSeen: Date
   });
 
   const reportSchema = new mongoose.Schema({

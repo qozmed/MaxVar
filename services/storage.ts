@@ -49,12 +49,26 @@ class StorageServiceImpl {
   async initialize(): Promise<void> {
     try {
       this.loadLocalSettings();
+      // Load user first to send ID in SSE
+      const storedEmail = localStorage.getItem('gourmet_user_email');
+      
       try {
           const response = await fetch('/api/users', { method: 'HEAD' });
           if (response.ok) {
               this.isOfflineMode = false;
               await this.refreshUsers();
-              this.connectToSSE();
+              // Load user info
+              if (storedEmail) {
+                const foundUser = this.usersCache.find(u => u.email.toLowerCase() === storedEmail.toLowerCase());
+                if (foundUser) {
+                    if (foundUser.isBanned) {
+                        this.saveUser(null);
+                    } else {
+                        this.currentUserCache = foundUser;
+                    }
+                }
+              }
+              this.connectToSSE(this.currentUserCache?.email);
           } else {
               throw new Error("API unavailable");
           }
@@ -63,24 +77,15 @@ class StorageServiceImpl {
           this.isOfflineMode = true;
           this.usersCache = []; 
       }
-      
-      const storedEmail = localStorage.getItem('gourmet_user_email');
-      if (storedEmail) {
-          const foundUser = this.usersCache.find(u => u.email.toLowerCase() === storedEmail.toLowerCase());
-          if (foundUser) {
-              if (foundUser.isBanned) {
-                  this.saveUser(null);
-              } else {
-                  this.currentUserCache = foundUser;
-              }
-          }
-      }
     } catch (error) { console.warn("Init error:", error); }
   }
 
-  private connectToSSE() {
-      if (this.eventSource) return;
-      this.eventSource = new EventSource('/api/events');
+  private connectToSSE(userEmail?: string) {
+      if (this.eventSource) {
+          this.eventSource.close();
+      }
+      const url = userEmail ? `/api/events?email=${encodeURIComponent(userEmail)}` : '/api/events';
+      this.eventSource = new EventSource(url);
       this.eventSource.onmessage = (event) => {
           try {
               const data = JSON.parse(event.data);
@@ -124,6 +129,7 @@ class StorageServiceImpl {
               if (data.require2FA) {
                   return { success: false, require2FA: true, message: data.message };
               }
+              this.connectToSSE(data.user.email); // Reconnect SSE with user context
               return { success: true, user: data.user, message: "Вход успешен" };
           }
           return { success: false, message: data.message || "Ошибка входа" };
@@ -139,7 +145,10 @@ class StorageServiceImpl {
               body: JSON.stringify({ name, email, password })
           });
           const data = await res.json();
-          if (res.ok && data.user) return { success: true, user: data.user, message: "Регистрация успешна" };
+          if (res.ok && data.user) {
+              this.connectToSSE(data.user.email); // Reconnect SSE with user context
+              return { success: true, user: data.user, message: "Регистрация успешна" };
+          }
           return { success: false, message: data.message || "Ошибка регистрации" };
       } catch (e) { return { success: false, message: "Ошибка сети" }; }
   }
@@ -191,8 +200,13 @@ class StorageServiceImpl {
 
   async saveUser(user: User | null): Promise<void> {
       this.currentUserCache = user;
-      if (user) localStorage.setItem('gourmet_user_email', user.email);
-      else localStorage.removeItem('gourmet_user_email');
+      if (user) {
+          localStorage.setItem('gourmet_user_email', user.email);
+      } else {
+          localStorage.removeItem('gourmet_user_email');
+          // Reconnect SSE anonymously on logout
+          this.connectToSSE();
+      }
   }
   getAllUsers(): User[] { return this.usersCache; }
   getUser(): User | null { return this.currentUserCache; }

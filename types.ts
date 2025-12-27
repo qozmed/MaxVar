@@ -64,6 +64,10 @@ export interface User {
   isBanned: boolean;
   is2FAEnabled: boolean; // NEW: Flag for optional 2FA
   settings?: UserSettings;
+  // Activity Tracking
+  lastLoginIp?: string;
+  lastSeen?: string; // ISO Date string
+  isOnline?: boolean; // Computed on server/client
 }
 
 export interface Report {
