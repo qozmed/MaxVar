@@ -66,11 +66,28 @@ const verifyPassword = (inputPassword, storedHash, storedSalt) => {
 };
 
 const getClientIp = (req) => {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) {
-        return forwarded.split(',')[0].trim();
+    // Try standard headers first
+    let ip = req.headers['x-forwarded-for'] || 
+             req.connection.remoteAddress || 
+             req.socket.remoteAddress || 
+             req.ip;
+
+    // x-forwarded-for can be a comma-separated list
+    if (typeof ip === 'string' && ip.includes(',')) {
+        ip = ip.split(',')[0].trim();
     }
-    return req.connection.remoteAddress || req.socket.remoteAddress || req.ip;
+
+    // Clean up IPv6 mapped IPv4 addresses (e.g., ::ffff:127.0.0.1)
+    if (typeof ip === 'string' && ip.startsWith('::ffff:')) {
+        ip = ip.substring(7);
+    }
+    
+    // Handle localhost IPv6
+    if (ip === '::1') {
+        return '127.0.0.1';
+    }
+
+    return ip || 'Unknown';
 };
 
 // --- ROBUST UNIQUE ID GENERATOR ---
@@ -249,12 +266,14 @@ app.get('/api/events', (req, res) => {
             onlineUsers.delete(userEmail);
             // Update last seen in DB
             const lastSeen = new Date();
+            
+            // Update Memory first (Important for UI consistency)
+            const idx = memUsers.findIndex(u => u.email === userEmail);
+            if (idx > -1) memUsers[idx].lastSeen = lastSeen;
+
             if (isMongoConnected) {
                 await UserModel.updateOne({ email: userEmail }, { lastSeen });
             }
-            // Update memory
-            const idx = memUsers.findIndex(u => u.email === userEmail);
-            if (idx > -1) memUsers[idx].lastSeen = lastSeen;
         } else {
             onlineUsers.set(userEmail, count - 1);
         }
@@ -424,21 +443,36 @@ app.post('/api/auth/login', async (req, res) => {
             if (!isValid) return res.status(400).json({ message: "Неверный код" });
         }
 
-        // Update IP and Last Seen
+        // Update IP and Last Seen (BOTH in Mongo AND Memory)
+        const now = new Date();
+        
+        // 1. Update Memory (Critical for Admin Panel "live" view)
+        const idx = memUsers.findIndex(u => u.email === normalizedEmail);
+        if (idx > -1) {
+            memUsers[idx].lastLoginIp = clientIp;
+            memUsers[idx].lastSeen = now;
+        }
+
+        // 2. Update DB
         if (isMongoConnected) {
-             user.lastLoginIp = clientIp;
-             user.lastSeen = new Date();
-             await user.save();
-        } else {
-             const idx = memUsers.findIndex(u => u.email === normalizedEmail);
-             if (idx > -1) {
-                 memUsers[idx].lastLoginIp = clientIp;
-                 memUsers[idx].lastSeen = new Date();
+             // Use updateOne to ensure field is set even if user object structure varies slightly
+             await UserModel.updateOne(
+                 { email: normalizedEmail }, 
+                 { lastLoginIp: clientIp, lastSeen: now }
+             );
+             // Also update local instance to return correct data to client
+             if (user.save) {
+                 user.lastLoginIp = clientIp;
+                 user.lastSeen = now;
              }
         }
 
-        // Success
+        // Success Response preparation
         const safeUser = isMongoConnected ? user.toObject() : { ...user };
+        // Ensure the returned user object has the new IP/Time
+        safeUser.lastLoginIp = clientIp;
+        safeUser.lastSeen = now;
+        
         delete safeUser.password;
         delete safeUser.salt;
         delete safeUser.totpSecret;
